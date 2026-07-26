@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+experiments/results/*.png
+experiments/results/*.npy
+.DS_Store
+Thumbs.db
+.vscode/
