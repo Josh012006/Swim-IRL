@@ -52,6 +52,29 @@ give a clear reason why it doesn't.
   (pirouette vs. weathervane) will need to be reconstructed from real
   trajectories before IRL can be run (Phase 2).
 
+## References
+
+Key papers this project builds on — read before implementing the
+corresponding phase.
+
+- [ ] Ziebart, B. D., Maas, A., Bagnell, J. A., & Dey, A. K. (2008).
+  *Maximum Entropy Inverse Reinforcement Learning*. AAAI.
+  [PDF](https://cdn.aaai.org/AAAI/2008/AAAI08-227.pdf)
+  Core method for Phase 0 — resolves the ambiguity of choosing among reward
+  functions that equally explain the observed behavior, via the principle
+  of maximum entropy.
+- [ ] Fu, J., Luo, K., & Levine, S. (2018). *Learning Robust Rewards with
+  Adversarial Inverse Reinforcement Learning*. ICLR.
+  [arXiv:1710.11248](https://arxiv.org/abs/1710.11248)
+  Planned extension (Phase 1+) — decouples the recovered reward from
+  environment dynamics for better transfer across conditions, relevant to
+  Phase 4.
+- [ ] Vergassola, M., Villermaux, E., & Shraiman, B. I. (2007). *'Infotaxis'
+  as a strategy for searching without gradients*. Nature, 445(7126), 406–409.
+  [Nature](https://www.nature.com/articles/nature05464) ·
+  [free PDF](https://faculty.washington.edu/minster/bio_inspired_robotics/research_articles/vergassola_vellermaux_shraiman_infotaxis_searching_without_gradients_nature2007.pdf)
+  Basis for the candidate "information" reward feature (Phase 1).
+
 ## Roadmap (phases)
 
 **Phase 0 — Simulation validation (blocking).**
@@ -64,7 +87,7 @@ Candidate state: local concentration, estimated local gradient, temporal
 derivative of concentration, speed, heading. Candidate features:
 concentration, velocity-gradient alignment, temporal derivative
 (chemotaxis hypothesis), effort cost, information term (infotaxis,
-Vergassola 2007).
+Vergassola 2007 — see References).
 **Open decision**: a unified action space (a single turning angle of
 variable magnitude) vs. two explicit channels (continuous for weathervane +
 discrete for pirouette, closer to the biology)? To be settled after reading
@@ -189,14 +212,15 @@ turns out to be a problem).
 
 ## Future work
 
-Cross-species comparison; IRL on molecular motors or regulatory networks;
-link between the inferred reward and a signaling pathway; modular/
-transferable reward; bridge toward encoding a policy in a molecular
-substrate.
+- Cross-species comparison
+- IRL on molecular motors or regulatory networks
+- Link between the inferred reward and a signaling pathway
+- Modular/transferable reward
+- Bridge toward encoding a policy in a molecular substrate
 
 ## Author
 
-Josué Mongan 
+Josué Mongan
 
 ## License
 
