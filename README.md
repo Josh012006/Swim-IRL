@@ -213,8 +213,8 @@ git clone https://github.com/Josh012006/Swim-IRL.git
 cd Swim-IRL
 ```
 
-This repository uses [NanoGoal-RL](https://github.com/Josh012006/NanoGoal-RL)
-(pinned to the `v2` tag) as a git submodule — it's the continuous
+This repository uses [NanoGoal-RL v2](https://github.com/Josh012006/NanoGoal-RL/tree/v2)
+(the `v2` branch) as a git submodule — it's the continuous
 synthetic testbed for Phase 0b, not a runtime dependency of Phase 0a/1's
 tabular work:
 
