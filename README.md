@@ -104,6 +104,17 @@ corresponding phase.
   [Nature](https://www.nature.com/articles/nature05464) ·
   [free PDF](https://faculty.washington.edu/minster/bio_inspired_robotics/research_articles/vergassola_vellermaux_shraiman_infotaxis_searching_without_gradients_nature2007.pdf)
   Basis for the candidate "information" reward feature (Phase 1).
+- [ ] Chen, K. S., Pillow, J. W., & Leifer, A. M. (2026). *State-switching
+  navigation strategies in Caenorhabditis elegans are beneficial for
+  chemotaxis*. PNAS, 123(25), e2519999123.
+  [Free full text (PMC)](https://pmc.ncbi.nlm.nih.gov/articles/PMC12324552/) ·
+  [arXiv preprint](https://arxiv.org/abs/2508.00191)
+  Not a blog post — no popular write-up of this specific result was found,
+  so this links the paper itself (free either way). Directly relevant to
+  the Phase 1 action-space decision: argues the pirouette/weathervane
+  split isn't two parallel per-timestep channels, but two persistent
+  internal states the animal switches between, driven by sensory input.
+  Read this one last, once Option A's own results are in hand.
 
 ## Roadmap (phases)
 
@@ -128,10 +139,21 @@ derivative of concentration, speed, heading. Candidate features:
 concentration, velocity-gradient alignment, temporal derivative
 (chemotaxis hypothesis), effort cost, information term (infotaxis,
 Vergassola 2007 — see References).
-**Open decision**: a unified action space (a single turning angle of
-variable magnitude) vs. two explicit channels (continuous for weathervane +
-discrete for pirouette, closer to the biology)? To be settled after reading
-Ziebart 2008, before writing the simulator.
+**Action space (resolved)**: unified action space — a single turning angle
+discretized into $N$ bins ($N$ left symbolic, TBD once an empirical
+criterion is chosen — not to be pinned to a specific value yet).
+Deliberately doesn't encode the pirouette/weathervane split, so this phase
+can test whether that structure emerges from behavior alone rather than
+assuming it. The two-channel, biologically-structured action space
+(continuous weathervane + discrete pirouette) is kept as a second,
+explicit parameterization for comparison once Phase 0b's methods (Guided
+Cost Learning / AIRL) are available — it isn't compatible with Phase 0a's
+exact tabular DP without further discretization anyway.
+See Chen, Pillow & Leifer 2026 (References) for a complication worth
+keeping in mind when designing the state: the two-mode structure may not
+be a simple per-timestep split, but driven by a persistent, sensory-
+switched internal state — plausibly requiring some memory of recent
+behavior in the state representation to detect.
 
 **Phase 2 — Real data.**
 Load *C. elegans* trajectories in a gradient (NaCl or odorant). Cleaning,
@@ -213,8 +235,8 @@ git clone https://github.com/Josh012006/Swim-IRL.git
 cd Swim-IRL
 ```
 
-This repository uses [NanoGoal-RL v2](https://github.com/Josh012006/NanoGoal-RL/tree/v2)
-(the `v2` branch) as a git submodule — it's the continuous
+This repository uses [NanoGoal-RL](https://github.com/Josh012006/NanoGoal-RL)
+(pinned to the `v2` branch) as a git submodule — it's the continuous
 synthetic testbed for Phase 0b, not a runtime dependency of Phase 0a/1's
 tabular work:
 
