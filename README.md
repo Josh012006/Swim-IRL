@@ -99,7 +99,7 @@ corresponding phase.
   Planned extension (Phase 1+) — decouples the recovered reward from
   environment dynamics for better transfer across conditions, relevant to
   Phase 4.
-- [ ] Vergassola, M., Villermaux, E., & Shraiman, B. I. (2007). *'Infotaxis'
+- [x] Vergassola, M., Villermaux, E., & Shraiman, B. I. (2007). *'Infotaxis'
   as a strategy for searching without gradients*. Nature, 445(7126), 406–409.
   [Nature](https://www.nature.com/articles/nature05464) ·
   [free PDF](https://faculty.washington.edu/minster/bio_inspired_robotics/research_articles/vergassola_vellermaux_shraiman_infotaxis_searching_without_gradients_nature2007.pdf)
@@ -135,10 +135,24 @@ reimplemented). Real data is off limits until **both** Phase 0a and Phase
 
 **Phase 1 — State/action representation + features.**
 Candidate state: local concentration, estimated local gradient, temporal
-derivative of concentration, speed, heading. Candidate features:
-concentration, velocity-gradient alignment, temporal derivative
-(chemotaxis hypothesis), effort cost, information term (infotaxis,
-Vergassola 2007 — see References).
+derivative of concentration, speed, heading. **Known gap**: none of these
+carry memory beyond a single instant — see the memory diagnostic below
+before finalizing this list.
+
+Candidate features: concentration, velocity-gradient alignment, temporal
+derivative (chemotaxis hypothesis), effort cost, information term
+(infotaxis, Vergassola 2007 — see References). The information feature
+must be the **prospective, action-conditioned** expected reduction in the
+entropy of a Bayesian posterior over source location — not the
+retrospective realized reduction — since the DP needs a value that varies
+across candidate actions at the same state. Unlike the other four
+features, this one requires standing up an actual belief-state filter,
+not just a direct formula: budget for that separately. Whether it earns a
+nonzero weight at all is an open empirical question, not a given —
+infotaxis was developed for turbulent, sparse-cue search, and the NaCl
+assay's gradient may be smooth enough that gradient-climbing features
+already do all the work.
+
 **Action space (resolved)**: unified action space — a single turning angle
 discretized into $N$ bins ($N$ left symbolic, TBD once an empirical
 criterion is chosen — not to be pinned to a specific value yet).
@@ -149,11 +163,23 @@ assuming it. The two-channel, biologically-structured action space
 explicit parameterization for comparison once Phase 0b's methods (Guided
 Cost Learning / AIRL) are available — it isn't compatible with Phase 0a's
 exact tabular DP without further discretization anyway.
-See Chen, Pillow & Leifer 2026 (References) for a complication worth
-keeping in mind when designing the state: the two-mode structure may not
-be a simple per-timestep split, but driven by a persistent, sensory-
-switched internal state — plausibly requiring some memory of recent
-behavior in the state representation to detect.
+
+**Memory diagnostic — do this before finalizing the state above.**
+Order of operations, once real trajectories are available (Phase 2):
+1. Compute the inter-turn-interval distribution from real trajectories;
+   fit single vs. double exponential (as in Chen, Pillow & Leifer 2026 —
+   see References).
+2. Single exponential fits well → the memoryless candidate state above is
+   fine as planned; proceed.
+3. Double exponential fits better → augment the state with a short window
+   of recent history (e.g. running turn-rate over the last few seconds, an
+   EMA of dC/dt, time-since-last-turn) before running IRL. This stays
+   inside the existing MaxEnt/GCL/AIRL machinery — just a wider state.
+4. Only if the augmented state still can't reproduce the double-exponential
+   signature in recovered/simulated behavior → escalate to an explicit
+   latent-state (POMDP-style) extension. Treat this as a documented
+   limitation/future-work item, not a default plan (see Limitations,
+   Future work).
 
 **Phase 2 — Real data.**
 Load *C. elegans* trajectories in a gradient (NaCl or odorant). Cleaning,
@@ -220,6 +246,9 @@ Swim-IRL/
   eval/
     recovery.py            # reward recovery metrics (Phase 0a/0b)
     predictive.py           # out-of-sample prediction (Phase 4)
+    memory_diagnostic.py     # inter-turn-interval single vs double
+                              # exponential check (Phase 1/2, run before
+                              # finalizing the state)
   experiments/             # reproducible scripts, one per milestone
   tests/                   # at least the Phase 0a/0b tests
 ```
@@ -297,6 +326,13 @@ hand-edited or committed as one-off artifacts.
   simple reward consistent with what is observed.
 - The inferred reward is an *as-if* model, not a claim about what the
   worm's nervous system actually computes.
+- The default state design is memoryless (Markovian in the instantaneous
+  state). Real *C. elegans* navigation may involve a persistent internal
+  state lasting several seconds (Chen, Pillow & Leifer 2026 — see
+  References) that a memoryless model structurally cannot reproduce (e.g.
+  the double-exponential inter-turn-interval statistic). See Phase 1's
+  memory diagnostic for the planned mitigation before this becomes an
+  empirical finding rather than a known risk.
 
 **To be documented as the project progresses** (nothing yet — this section
 will be updated at every milestone, including when a simplifying assumption
@@ -309,6 +345,9 @@ turns out to be a problem).
 - Link between the inferred reward and a signaling pathway
 - Modular/transferable reward
 - Bridge toward encoding a policy in a molecular substrate
+- Explicit latent-state (POMDP-style) extension of the IRL pipeline, if
+  Phase 1's memory diagnostic shows that an augmented but still Markovian
+  state isn't enough to reproduce real navigation statistics
 
 ## Author
 
