@@ -43,10 +43,27 @@ give a clear reason why it doesn't.
 
 - **Linear MaxEnt IRL** (Ziebart, Maas, Bagnell & Dey, AAAI 2008) first —
   prioritizing interpretability, over reward features that are isolable and
-  testable one at a time.
-- Planned extensions, in order: **Deep MaxEnt IRL**, then **AIRL**
-  (Fu, Luo & Levine, 2018) via the `imitation` library (HumanCompatibleAI),
-  for a more transferable reward over continuous state.
+  testable one at a time. Validated on a small tabular gridworld before
+  anything else (Phase 0a).
+- **Deep MaxEnt IRL** (Wulfmeier, Ondruska & Posner, 2015 — see References)
+  extends linear MaxEnt to a nonlinear (neural) reward, but keeps the same
+  exact tabular DP — which doesn't scale to a continuous environment like
+  NanoGoal-RL. So in practice it's implemented here as **Guided Cost
+  Learning** (Finn, Levine & Abbeel, ICML 2016 — see References): the
+  sampling-based descendant of the same idea, usable on continuous state.
+  A reward network is trained via importance-sampled maximum-entropy IRL.
+  Policy optimization is handed off to an existing RL library
+  (Stable-Baselines3 / PPO), so the effort goes into the reward-learning
+  loop itself, not into reimplementing policy gradients.
+- **AIRL** (Fu, Luo & Levine, 2018) via the `imitation` library
+  (HumanCompatibleAI), for a more transferable, dynamics-independent
+  reward over continuous state.
+- Both continuous-state methods (Deep MaxEnt / AIRL) are validated on a
+  second synthetic testbed before touching real data: the continuous,
+  known-reward environment from
+  [NanoGoal-RL v2](https://github.com/Josh012006/NanoGoal-RL/tree/v2),
+  reused here as a controlled continuous-control sanity check, independent
+  of the worm data (Phase 0b).
 - Core difficulty: the worm's decisions are not observed directly, only its
   position/posture over time → heading, speed, and reorientation events
   (pirouette vs. weathervane) will need to be reconstructed from real
@@ -57,12 +74,25 @@ give a clear reason why it doesn't.
 Key papers this project builds on — read before implementing the
 corresponding phase.
 
-- [ ] Ziebart, B. D., Maas, A., Bagnell, J. A., & Dey, A. K. (2008).
+- [x] Ziebart, B. D., Maas, A., Bagnell, J. A., & Dey, A. K. (2008).
   *Maximum Entropy Inverse Reinforcement Learning*. AAAI.
   [PDF](https://cdn.aaai.org/AAAI/2008/AAAI08-227.pdf)
-  Core method for Phase 0 — resolves the ambiguity of choosing among reward
+  Core method for Phase 0a — resolves the ambiguity of choosing among reward
   functions that equally explain the observed behavior, via the principle
   of maximum entropy.
+- [ ] Wulfmeier, M., Ondruska, P., & Posner, I. (2015). *Maximum Entropy
+  Deep Inverse Reinforcement Learning*.
+  [arXiv:1507.04888](https://arxiv.org/abs/1507.04888)
+  Extends Ziebart 2008 to a nonlinear (neural) reward, still via exact
+  tabular DP. Origin of the term "Deep MaxEnt IRL" used in this project —
+  see the Finn et al. 2016 entry below for the continuous-state version
+  actually implemented (Phase 0b, Phase 1).
+- [ ] Finn, C., Levine, S., & Abbeel, P. (2016). *Guided Cost Learning: Deep
+  Inverse Optimal Control via Policy Optimization*. ICML.
+  [arXiv:1603.00448](https://arxiv.org/abs/1603.00448)
+  Sample-based descendant of Wulfmeier 2015, usable on continuous
+  state/action spaces — this is what "Deep MaxEnt IRL" concretely means in
+  this project (Phase 0b, Phase 1).
 - [ ] Fu, J., Luo, K., & Levine, S. (2018). *Learning Robust Rewards with
   Adversarial Inverse Reinforcement Learning*. ICLR.
   [arXiv:1710.11248](https://arxiv.org/abs/1710.11248)
@@ -77,10 +107,20 @@ corresponding phase.
 
 ## Roadmap (phases)
 
-**Phase 0 — Simulation validation (blocking).**
-Build a simulated swimmer with a CHOSEN ground-truth reward, verify that
-MaxEnt IRL recovers it, on ≥ 3 different test rewards. Real data is off
-limits until this milestone is met.
+**Phase 0a — Tabular simulation validation (blocking).**
+Build a small discretized/tabular simulated swimmer with a CHOSEN
+ground-truth reward, verify that linear MaxEnt IRL recovers it, on ≥ 3
+different test rewards.
+
+**Phase 0b — Continuous simulation validation (blocking).**
+Same validation, one level up in complexity: verify that Deep MaxEnt IRL
+(Guided Cost Learning) and AIRL each recover a sensible reward on a
+continuous-control environment with a known ground-truth reward, before
+either method ever sees worm data. Testbed:
+[NanoGoal-RL v2](https://github.com/Josh012006/NanoGoal-RL/tree/v2),
+reused as an external, already-known-reward environment (not
+reimplemented). Real data is off limits until **both** Phase 0a and Phase
+0b are met.
 
 **Phase 1 — State/action representation + features.**
 Candidate state: local concentration, estimated local gradient, temporal
@@ -99,8 +139,13 @@ interpolation, speed estimation, pirouette/weathervane segmentation.
 Not allowed: passive (purely Brownian) particles → degenerate reward.
 
 **Phase 3 — Comparison to the known mechanism.**
-Does the "temporal derivative" feature emerge as dominant, consistent with
-what is known about the real sensory mechanism?
+For the linear model: does the "temporal derivative" feature emerge as
+dominant, consistent with what is known about the real sensory mechanism?
+For Deep MaxEnt / AIRL, the reward is no longer a transparent linear sum,
+so mechanism-consistency is tested via feature ablation / sensitivity
+analysis instead of reading off a weight directly. This phase also
+compares interpretability and mechanism-consistency across all three
+recovered rewards (linear MaxEnt, Deep MaxEnt, AIRL).
 
 **Phase 4 — Robustness & transfer.**
 Does the inferred reward predict unseen trajectories, other individuals,
@@ -108,7 +153,8 @@ other gradient conditions?
 
 ## Progress
 
-- [ ] Phase 0 — simulation validation
+- [ ] Phase 0a — tabular simulation validation
+- [ ] Phase 0b — continuous simulation validation
 - [ ] Phase 1 — state/action representation
 - [ ] Phase 2 — real data
 - [ ] Phase 3 — comparison to the known mechanism
@@ -121,10 +167,14 @@ other gradient conditions?
 - Python
 - NumPy / SciPy
 - Gymnasium
+- Stable-Baselines3 (PPO — the inner policy optimizer for Guided Cost
+  Learning, and reused internally by `imitation`'s AIRL)
 - `imitation` (AIRL/GAIL)
 - Matplotlib
 - JAX (optional, for differentiable components)
 - `trackpy` (optional, if starting from raw video)
+- TensorFlow, PyGame, `wandb` (optional — only needed for Phase 0b,
+  pulled in transitively through the NanoGoal-RL submodule)
 
 ## Repository structure
 
@@ -132,20 +182,24 @@ other gradient conditions?
 Swim-IRL/
   README.md
   requirements.txt
-  sim/              # simulated swimmer (Phase 0), reused for Phase 2
+  external/
+    NanoGoal-RL/        # git submodule, pinned to v2 — continuous testbed (Phase 0b)
+  sim/
+    gridworld.py         # tabular simulated swimmer (Phase 0a), reused for Phase 2
+    nanogoal_adapter.py  # thin wrapper exposing NanoGoal-RL's env as-is (Phase 0b)
   irl/
-    maxent_linear.py
-    deep_maxent.py
-    airl_wrapper.py   # via imitation
-  features.py         # isolable reward features
+    maxent_linear.py     # Phase 0a
+    gcl.py               # Guided Cost Learning / Deep MaxEnt (Phase 0b, Phase 1)
+    airl_wrapper.py       # via imitation (Phase 0b, Phase 1)
+  features.py             # isolable reward features
   data/
-    loaders.py        # loading + cleaning of real trajectories
-    simulate.py        # ground-truth trajectory generation (Phase 0)
+    loaders.py            # loading + cleaning of real trajectories
+    simulate.py            # ground-truth trajectory generation (Phase 0a)
   eval/
-    recovery.py        # reward recovery metrics (Phase 0)
-    predictive.py       # out-of-sample prediction (Phase 4)
-  experiments/         # reproducible scripts, one per milestone
-  tests/               # at least the Phase 0 tests
+    recovery.py            # reward recovery metrics (Phase 0a/0b)
+    predictive.py           # out-of-sample prediction (Phase 4)
+  experiments/             # reproducible scripts, one per milestone
+  tests/                   # at least the Phase 0a/0b tests
 ```
 
 ## Installation
@@ -157,6 +211,15 @@ platforms.
 ```bash
 git clone https://github.com/Josh012006/Swim-IRL.git
 cd Swim-IRL
+```
+
+This repository uses [NanoGoal-RL](https://github.com/Josh012006/NanoGoal-RL)
+(pinned to the `v2` tag) as a git submodule — it's the continuous
+synthetic testbed for Phase 0b, not a runtime dependency of Phase 0a/1's
+tabular work:
+
+```bash
+git submodule update --init --recursive
 ```
 
 Create and activate a virtual environment:
@@ -184,11 +247,18 @@ Then, on any OS:
 pip install -r requirements.txt
 ```
 
+Phase 0b additionally needs NanoGoal-RL's own dependencies (TensorFlow,
+Stable-Baselines3, PyGame, `wandb`) — install them only if you're working
+on that phase:
+```bash
+pip install -r external/NanoGoal-RL/requirements.txt
+```
+
 ## Usage
 
-No runnable experiments yet — Phase 0 hasn't been implemented. This section
+No runnable experiments yet — Phase 0a hasn't been implemented. This section
 will be filled in with the exact reproducible commands (e.g.
-`python experiments/phase0_recovery.py --seed 0`) as soon as it lands, the
+`python experiments/phase0a_recovery.py --seed 0`) as soon as it lands, the
 same way every subsequent milestone will get its own command here.
 
 ## Reproducibility
