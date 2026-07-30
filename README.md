@@ -80,7 +80,7 @@ corresponding phase.
   Core method for Phase 0a — resolves the ambiguity of choosing among reward
   functions that equally explain the observed behavior, via the principle
   of maximum entropy.
-- [ ] Wulfmeier, M., Ondruska, P., & Posner, I. (2015). *Maximum Entropy
+- [x] Wulfmeier, M., Ondruska, P., & Posner, I. (2015). *Maximum Entropy
   Deep Inverse Reinforcement Learning*.
   [arXiv:1507.04888](https://arxiv.org/abs/1507.04888)
   Extends Ziebart 2008 to a nonlinear (neural) reward, still via exact
