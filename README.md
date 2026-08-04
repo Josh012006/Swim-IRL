@@ -87,7 +87,7 @@ corresponding phase.
   tabular DP. Origin of the term "Deep MaxEnt IRL" used in this project —
   see the Finn et al. 2016 entry below for the continuous-state version
   actually implemented (Phase 0b, Phase 1).
-- [ ] Finn, C., Levine, S., & Abbeel, P. (2016). *Guided Cost Learning: Deep
+- [x] Finn, C., Levine, S., & Abbeel, P. (2016). *Guided Cost Learning: Deep
   Inverse Optimal Control via Policy Optimization*. ICML.
   [arXiv:1603.00448](https://arxiv.org/abs/1603.00448)
   Sample-based descendant of Wulfmeier 2015, usable on continuous
