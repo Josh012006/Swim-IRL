@@ -201,14 +201,56 @@ other gradient conditions?
 
 ## Progress
 
-- [ ] Phase 0a — tabular simulation validation
+- [x] Phase 0a — tabular simulation validation
 - [ ] Phase 0b — continuous simulation validation
 - [ ] Phase 1 — state/action representation
 - [ ] Phase 2 — real data
 - [ ] Phase 3 — comparison to the known mechanism
 - [ ] Phase 4 — robustness & transfer
 
-*(nothing is implemented yet — this README documents the starting point)*
+*(Phase 0a implemented and validated; Phase 0b onward not yet started)*
+
+## Results
+
+**Phase 0a — tabular recovery (done).** Linear MaxEnt IRL recovers a
+behaviorally correct reward — Expected Value Difference (EVD) = 0 — on
+all 3 ground-truth reward modes tested on the 6×6 gridworld: pure
+goal-seeking, pure obstacle-avoidance, and a mixed reward (see
+`experiments/phase0a_recovery.py` for the exact theta vectors, now over
+just `dist_goal`/`dist_obstacle` — `row`/`col` were dropped, see
+Limitations). Regenerate with:
+
+```bash
+python -m experiments.phase0a_recovery --seed 0
+```
+
+![Phase 0a recovery: theta_true vs theta_hat per reward mode, with EVD annotated](experiments/results/phase0a_recovery.png)
+
+**What EVD = 0 does and doesn't establish.** EVD gives real confidence:
+the recovered policy is behaviorally indistinguishable from the
+truly-optimal one under the true reward, from any valid start state — not
+a weak claim, and one that held up after real debugging (an optimizer
+instability, and a feature-collinearity issue, both documented below).
+But `theta_hat` itself doesn't fully converge to `theta_true` numerically
+even once optimization has genuinely plateaued (see Limitations) — so
+linear MaxEnt IRL, on this tabular setup, recovers *behavior* reliably
+without recovering the *reward's individual weights* uniquely. That's the
+ill-posedness this project names as a starting principle (see Objective),
+now observed directly rather than assumed.
+
+To be precise about what this does and doesn't motivate: GCL and AIRL
+don't inherently fix feature collinearity — an underdetermined reward is
+a property of what the demonstrated behavior can distinguish, not of the
+algorithm recovering it, and a neural reward would face an analogous
+issue if given comparably collinear data (and be harder to inspect while
+facing it). What Phase 0b actually adds is two different, genuinely new
+robustness checks Phase 0a's single fixed gridworld never ran: whether
+the same pipeline holds up on a richer, continuous environment (NanoGoal-RL)
+where features are less likely to be as tightly collinear as on a small
+grid, and — specifically for AIRL — whether the recovered reward stays
+valid under a *change in the environment's own dynamics*, a dynamics-
+transfer robustness property Phase 0a's one fixed MDP was never in a
+position to test at all.
 
 ## Technologies used
 
@@ -234,9 +276,9 @@ Swim-IRL/
     NanoGoal-RL/        # git submodule, pinned to v2 — continuous testbed (Phase 0b)
   sim/
     gridworld.py         # tabular simulated swimmer (Phase 0a), reused for Phase 2
-    features_gridworld.py # Phase 0a-only toy features (row, col, dist-to-goal,
-                          # dist-to-obstacle) — separate from features.py, which
-                          # is reserved for the real worm features
+    features_gridworld.py # Phase 0a-only toy features (dist-to-goal,
+                          # dist-to-obstacle) — separate from features.py,
+                          # which is reserved for the real worm features
     nanogoal_adapter.py  # thin wrapper exposing NanoGoal-RL's env as-is (Phase 0b)
   irl/
     maxent_linear.py     # Phase 0a
@@ -256,8 +298,20 @@ Swim-IRL/
     memory_diagnostic.py     # inter-turn-interval single vs double
                               # exponential check (Phase 1/2, run before
                               # finalizing the state)
+    convergence_diagnostic.py # MaxEnt log-likelihood monotonicity check
+                              # -- catches optimizer instability
+                              # (too-large learning_rate) separately from
+                              # feature-identifiability issues
   experiments/             # reproducible scripts, one per milestone
+    phase0a_recovery.py      # Phase 0a: 3 reward modes, recovery + plot
+    plotting.py              # shared plot helpers for experiment reports
+                              # (not in eval/ -- reported results, not metrics)
   tests/                   # at least the Phase 0a/0b tests
+    conftest.py              # shared pytest fixtures (e.g. reference_mdp)
+    test_maxent_linear.py     # irl/maxent_linear.py, vs. hand-derived values
+    test_recovery.py          # eval/recovery.py
+    test_simulate.py          # data/simulate.py
+    test_convergence_diagnostic.py # eval/convergence_diagnostic.py
 ```
 
 ## Installation
@@ -314,16 +368,25 @@ pip install -r external/NanoGoal-RL/requirements.txt
 
 ## Usage
 
-No runnable experiments yet — Phase 0a hasn't been implemented. This section
-will be filled in with the exact reproducible commands (e.g.
-`python experiments/phase0a_recovery.py --seed 0`) as soon as it lands, the
-same way every subsequent milestone will get its own command here.
+```bash
+python -m experiments.phase0a_recovery --seed 0
+```
+
+Runs Phase 0a's 3 reward-recovery modes end to end and regenerates
+`experiments/results/phase0a_recovery.png` (see Results below). Run as a
+module (`python -m ...`), not as a direct script (`python
+experiments/foo.py`) — same import-path reason as running tests via
+`python -m pytest` rather than `python tests/foo.py` directly. Every
+subsequent milestone will get its own command added here as it lands.
 
 ## Reproducibility
 
 Every experiment must be rerunnable end-to-end from a single command with a
-fixed seed. Results (figures, metrics) are regenerated by that command, not
-hand-edited or committed as one-off artifacts.
+fixed seed. Figures and metrics are regenerated by that command, never
+hand-edited. Some regenerated artifacts (e.g.
+`experiments/results/phase0a_recovery.png`) are committed anyway, so they
+render inline in this README — but they stay fully disposable: deleting
+them and rerunning the experiment command recreates them exactly.
 
 ## Limitations
 
@@ -341,9 +404,39 @@ hand-edited or committed as one-off artifacts.
   memory diagnostic for the planned mitigation before this becomes an
   empirical finding rather than a known risk.
 
-**To be documented as the project progresses** (nothing yet — this section
-will be updated at every milestone, including when a simplifying assumption
-turns out to be a problem).
+**Documented as the project progressed:**
+- Early versions of Phase 0a's features included `row`/`col` (raw grid
+  position). With a single fixed start state, they ended up collinear
+  with `dist_goal` along the one start→goal path actually demonstrated,
+  and recovered theta values diverged substantially from ground truth on
+  those two features even when EVD = 0. Randomizing the start
+  distribution (now uniform over non-obstacle cells) helped but didn't
+  fully resolve it — some of that collinearity is structural, from having
+  a goal fixed in a grid corner, not just an artifact of limited start
+  diversity. `row`/`col` were dropped entirely; they didn't correspond to
+  anything in the real worm project anyway.
+- Even with only `dist_goal`/`dist_obstacle` remaining, some correlation
+  persists, and it's mode-dependent: strong (correlation ≈ -0.7) when the
+  ground-truth reward is goal-seeking-dominant, negligible (≈ 0.01) under
+  pure obstacle-avoidance. Recovered weight on `dist_obstacle` in
+  goal-seeking-dominant modes stays meaningfully nonzero even when ground
+  truth is exactly 0 — EVD still correctly reports 0 in these cases: the
+  recovered *behavior* is optimal, even though the individual feature
+  weight isn't uniquely pinned down by the data.
+- More optimization iterations do not fix this, and can make theta_hat
+  drift numerically further from theta_true rather than closer:
+  log-likelihood plateaus (near-zero gains) well before 300 iterations,
+  while theta_hat keeps slowly moving along the collinear direction with
+  essentially no likelihood gain to show for it — a textbook flat-ridge
+  optimization signature, not a sign of insufficient training.
+- Separately, a genuine optimizer bug was found and fixed along the way:
+  `learning_rate=0.1` made the (provably concave) MaxEnt log-likelihood
+  decrease at some iterations instead of increasing monotonically —
+  optimizer instability, not expected behavior for a concave objective.
+  Fixed by lowering to `learning_rate=0.02`, and now covered by a
+  regression test (`tests/test_convergence_diagnostic.py`, using
+  `eval/convergence_diagnostic.py`) so a learning rate creeping back up
+  gets caught automatically instead of silently producing a bad theta_hat.
 
 ## Future work
 

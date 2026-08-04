@@ -18,7 +18,7 @@ def small_grid() -> tuple[TabularMDP, tuple[int, int], list[tuple[int, int]]]:
 
 def test_sampling_matches_backward_pass_distribution(small_grid):
     mdp, goal_pos, obstacles = small_grid
-    theta = np.array([0.0, 0.0, -1.0, 0.0])  # pousse vers le but
+    theta = np.array([-1.0, 0.0])  # pousse vers le but (dist_goal, dist_obstacle)
     horizon = 6
     start_state = coord_to_state(0, 0, width=4)
     start_distribution = np.zeros(mdp.n_states)
@@ -45,7 +45,7 @@ def test_sampling_matches_backward_pass_distribution(small_grid):
 
 def test_generated_trajectories_are_structurally_valid(small_grid):
     mdp, goal_pos, obstacles = small_grid
-    theta = np.array([0.0, 0.0, -1.0, 0.0])
+    theta = np.array([-1.0, 0.0])
     horizon = 6
     start_state = coord_to_state(0, 0, width=4)
     start_distribution = np.zeros(mdp.n_states)

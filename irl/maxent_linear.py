@@ -78,7 +78,7 @@ def fit(
     demonstrations: list[np.ndarray],   # each shape (horizon+1,), dtype=int — état à chaque t
     start_distribution: np.ndarray,     # shape (n_states,)
     horizon: int,
-    learning_rate: float = 0.1,
+    learning_rate: float = 0.02,
     n_iterations: int = 200,
     theta_init: np.ndarray | None = None,  # défaut : zeros(n_features)
 ) -> np.ndarray:
