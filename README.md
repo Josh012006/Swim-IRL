@@ -234,15 +234,19 @@ Swim-IRL/
     NanoGoal-RL/        # git submodule, pinned to v2 — continuous testbed (Phase 0b)
   sim/
     gridworld.py         # tabular simulated swimmer (Phase 0a), reused for Phase 2
+    features_gridworld.py # Phase 0a-only toy features (row, col, dist-to-goal,
+                          # dist-to-obstacle) — separate from features.py, which
+                          # is reserved for the real worm features
     nanogoal_adapter.py  # thin wrapper exposing NanoGoal-RL's env as-is (Phase 0b)
   irl/
     maxent_linear.py     # Phase 0a
     gcl.py               # Guided Cost Learning / Deep MaxEnt (Phase 0b, Phase 1)
     airl_wrapper.py       # via imitation (Phase 0b, Phase 1)
   features.py             # isolable reward features
-  mdp.py                   # shared TabularMDP dataclass — no dependencies,
-                            # importable from sim/, irl/, data/, eval/
-                            # without circular/backward imports
+  mdp.py                   # shared TabularMDP dataclass + coord_to_state/
+                            # state_to_coord — no dependencies, importable
+                            # from sim/, irl/, data/, eval/ without
+                            # circular/backward imports
   data/
     loaders.py            # loading + cleaning of real trajectories
     simulate.py            # ground-truth trajectory generation (Phase 0a)
