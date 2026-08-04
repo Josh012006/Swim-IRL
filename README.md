@@ -1,6 +1,6 @@
 # Swim-IRL
 
-Inverse reinforcement learning (IRL) on real trajectories of **active**
+**Inverse reinforcement learning (IRL)** on real trajectories of **active**
 microscopic swimmers, to infer the reward function under which their
 behavior is *as if* optimal.
 
@@ -93,7 +93,7 @@ corresponding phase.
   Sample-based descendant of Wulfmeier 2015, usable on continuous
   state/action spaces — this is what "Deep MaxEnt IRL" concretely means in
   this project (Phase 0b, Phase 1).
-- [ ] Fu, J., Luo, K., & Levine, S. (2018). *Learning Robust Rewards with
+- [x] Fu, J., Luo, K., & Levine, S. (2018). *Learning Robust Rewards with
   Adversarial Inverse Reinforcement Learning*. ICLR.
   [arXiv:1710.11248](https://arxiv.org/abs/1710.11248)
   Planned extension (Phase 1+) — decouples the recovered reward from
