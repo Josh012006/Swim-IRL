@@ -27,16 +27,16 @@ def sample_trajectory(
     # s_0 ~ start_distribution
     # for t in 0..horizon-1:
     #   a_t ~ action_probs[t, s_t]           (Categorical over n_actions)
-    #   s_{t+1} ~ mdp.transition[s_t, a_t]   (Categorical over n_states)
-    states = np.zeros(shape=horizon+1)
-    actions = np.zeros(shape=horizon)
+	#   s_{t+1} ~ mdp.transition[s_t, a_t]   (Categorical over n_states)
+	states = np.zeros(shape=horizon+1, dtype=int)
+	actions = np.zeros(shape=horizon, dtype=int)
 
-    init_state = rng.choice(mdp.n_states, p=start_distribution)
-    states[0] = init_state
+	init_state = int(rng.choice(mdp.n_states, p=start_distribution))
+	states[0] = init_state
 	for t in range(horizon):
-		action = rng.choice(mdp.n_actions, p=action_probs[t, states[t]])
+		action = int(rng.choice(mdp.n_actions, p=action_probs[t, states[t]]))
 		actions[t] = action
-		new_state = rng.choice(mdp.n_states, p=mdp.transition[states[t], action])
+		new_state = int(rng.choice(mdp.n_states, p=mdp.transition[states[t], action]))
 		states[t+1] = new_state
 
 	return (states, actions)
@@ -57,11 +57,12 @@ def generate_demonstrations(
     #
     # action_probs, _ = backward_pass(mdp, theta, horizon)   -- une seule fois
     # puis n_demonstrations appels à sample_trajectory, ne garder que .states
-    demonstrations = []
+	demonstrations = []
 
-    action_probs, _ = backward_pass(mdp, theta, horizon)
-    for _ in range(n_demonstrations):
-    	states, _ = sample_trajectory(mdp, action_probs, start_distribution, horizon, rng)
-    	demonstrations.append(states)
-    return demonstrations
+	action_probs, _ = backward_pass(mdp, theta, horizon)
+	for _ in range(n_demonstrations):
+		states, _ = sample_trajectory(mdp, action_probs, start_distribution, horizon, rng)
+		demonstrations.append(states)
+	
+	return demonstrations
     
