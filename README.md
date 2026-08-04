@@ -1,6 +1,6 @@
 # Swim-IRL
 
-**Inverse reinforcement learning (IRL)** on real trajectories of **active**
+**Inverse reinforcement learning** (IRL) on real trajectories of **active**
 microscopic swimmers, to infer the reward function under which their
 behavior is *as if* optimal.
 
@@ -240,6 +240,9 @@ Swim-IRL/
     gcl.py               # Guided Cost Learning / Deep MaxEnt (Phase 0b, Phase 1)
     airl_wrapper.py       # via imitation (Phase 0b, Phase 1)
   features.py             # isolable reward features
+  mdp.py                   # shared TabularMDP dataclass — no dependencies,
+                            # importable from sim/, irl/, data/, eval/
+                            # without circular/backward imports
   data/
     loaders.py            # loading + cleaning of real trajectories
     simulate.py            # ground-truth trajectory generation (Phase 0a)
