@@ -26,6 +26,20 @@ def create_env(nanogoal_path: str):
     return env.NanoEnv()
 
 
+def _sample_category(seeds_list, loader_rng, pct=0.40):
+    arr = np.array(seeds_list)
+    k   = max(1, int(len(arr) * pct))
+    idx = loader_rng.choice(len(arr), size=k, replace=False)
+    return set(arr[idx].tolist())
+
+
+def _build_test_set(all_category, train_set, test_rng, n=500):
+    candidates = np.array([s for s in all_category if s not in train_set])
+    k          = min(n, len(candidates))
+    idx        = test_rng.choice(len(candidates), size=k, replace=False)
+    return candidates[idx].tolist()
+
+
 def load_test_seeds(nanogoal_path: str) -> dict[str, list[int]]:
     """Reproduces eval.py's train/test split exactly -- same seeds.json,
     same RNG seeds (99999 for the training-split sampling, 77777 for
@@ -49,25 +63,15 @@ def load_test_seeds(nanogoal_path: str) -> dict[str, list[int]]:
     with open(json_path) as f:
         _all_seeds = json.load(f)
 
-    def _sample_category(seeds_list, pct=0.40):
-        arr = np.array(seeds_list)
-        k   = max(1, int(len(arr) * pct))
-        idx = _loader_rng.choice(len(arr), size=k, replace=False)
-        return set(arr[idx].tolist())
+    train_easy   = _sample_category(_all_seeds["easy"], _loader_rng, pct=0.40)
+    train_medium = _sample_category(_all_seeds["medium"], _loader_rng, pct=0.60)
+    train_hard   = _sample_category(_all_seeds["hard"], _loader_rng, pct=0.60)
 
-    train_easy   = _sample_category(_all_seeds["easy"], pct=0.40)
-    train_medium = _sample_category(_all_seeds["medium"], pct=0.60)
-    train_hard   = _sample_category(_all_seeds["hard"], pct=0.60)
 
-    def _build_test_set(all_category, train_set, n=500):
-        candidates = np.array([s for s in all_category if s not in train_set])
-        k          = min(n, len(candidates))
-        idx        = _test_rng.choice(len(candidates), size=k, replace=False)
-        return candidates[idx].tolist()
 
-    test_easy_seeds   = _build_test_set(_all_seeds["easy"],   train_easy)
-    test_medium_seeds = _build_test_set(_all_seeds["medium"], train_medium)
-    test_hard_seeds   = _build_test_set(_all_seeds["hard"],   train_hard)
+    test_easy_seeds   = _build_test_set(_all_seeds["easy"], _test_rng, train_easy)
+    test_medium_seeds = _build_test_set(_all_seeds["medium"], _test_rng, train_medium)
+    test_hard_seeds   = _build_test_set(_all_seeds["hard"], _test_rng, train_hard)
 
     test_sets = {
         "easy":   test_easy_seeds,
