@@ -1,0 +1,4 @@
+[submodule "external/NanoGoal-RL"]
+	path = external/NanoGoal-RL
+	url = https://github.com/Josh012006/NanoGoal-RL.git
+	branch = v2
