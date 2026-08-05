@@ -1,8 +1,6 @@
 name: Tests
-
 on:
   push:
-
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -21,7 +19,8 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -r external/NanoGoal-RL/requirements.txt --no-deps
+          grep -v -i '^torch' external/NanoGoal-RL/requirements.txt > /tmp/nanogoal-requirements-no-torch.txt
+          pip install -r /tmp/nanogoal-requirements-no-torch.txt --no-deps
 
       - name: Run tests
         run: python -m pytest

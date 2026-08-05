@@ -32,7 +32,20 @@ class RewardNetwork(nn.Module):
     # Architecture is your call -- 2-3 hidden layers, ~32-64 units each,
     # is a reasonable starting point, not something to over-engineer yet.
     def __init__(self, obs_dim: int = 15, hidden_dim: int = 64):
-        ...
+        super().__init__()
+        
+        # Regroupement des couches de manière séquentielle
+        self.network = nn.Sequential(
+            nn.Linear(obs_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 1)
+        )
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         # obs: shape (batch, 15)
