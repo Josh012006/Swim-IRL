@@ -20,7 +20,8 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          pip install -r external/NanoGoal-RL/requirements.txt
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r external/NanoGoal-RL/requirements.txt --no-deps
 
       - name: Run tests
         run: python -m pytest
