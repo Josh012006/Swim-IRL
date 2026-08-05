@@ -69,9 +69,9 @@ def load_test_seeds(nanogoal_path: str) -> dict[str, list[int]]:
 
 
 
-    test_easy_seeds   = _build_test_set(_all_seeds["easy"], _test_rng, train_easy)
-    test_medium_seeds = _build_test_set(_all_seeds["medium"], _test_rng, train_medium)
-    test_hard_seeds   = _build_test_set(_all_seeds["hard"], _test_rng, train_hard)
+    test_easy_seeds   = _build_test_set(_all_seeds["easy"], train_easy, _test_rng)
+    test_medium_seeds = _build_test_set(_all_seeds["medium"], train_medium, _test_rng)
+    test_hard_seeds   = _build_test_set(_all_seeds["hard"], train_hard, _test_rng)
 
     test_sets = {
         "easy":   test_easy_seeds,
