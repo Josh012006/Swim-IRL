@@ -125,6 +125,15 @@ corresponding phase.
   split isn't two parallel per-timestep channels, but two persistent
   internal states the animal switches between, driven by sensory input.
   Read this one last, once Option A's own results are in hand.
+- [x] Gleave, A., Taufeeque, M., Rocamonde, J., Jenner, E., Wang, S. H.,
+  Toyer, S., Ernestus, M., Belrose, N., Emmons, S., & Russell, S. (2022).
+  *imitation: Clean Imitation Learning Implementations*.
+  [arXiv:2211.11972](https://arxiv.org/abs/2211.11972)
+  Not a method to read before implementing, like the others above — the
+  software library `irl/airl_wrapper.py` is built on
+  (HumanCompatibleAI/imitation, verified against v1.0.1). Cited here for
+  the same reason the papers are: the actual adversarial training loop in
+  AIRL is this library's, not reimplemented in this project (unlike GCL).
 
 ## Roadmap (phases)
 
@@ -218,9 +227,10 @@ other gradient conditions?
 - [ ] Phase 3 — comparison to the known mechanism
 - [ ] Phase 4 — robustness & transfer
 
-*(Phase 0a implemented and validated; Phase 0b infrastructure — submodule,
-adapter, demonstration pipeline — implemented and verified; GCL/AIRL
-themselves not yet implemented)*
+*(Phase 0a implemented and validated; Phase 0b's GCL and AIRL are both
+implemented and verified end-to-end against the real environment/models —
+mechanically correct, but not yet run at real scale, so no recovery
+result to report yet)*
 
 ## Results
 
@@ -264,27 +274,26 @@ valid under a *change in the environment's own dynamics*, a dynamics-
 transfer robustness property Phase 0a's one fixed MDP was never in a
 position to test at all.
 
-**Phase 0b — infrastructure (in progress).** The NanoGoal-RL v2 submodule
-is integrated (`external/NanoGoal-RL/`, pinned; easy and medium trained
-models available, hard still training). `sim/nanogoal_adapter.py`
-(policy/environment interface) and `data/simulate_nanogoal.py` (the 3×3
-agent-competence × environment-mix demonstration grid, see Approach) are
-implemented and verified end-to-end against the real easy model on real
-held-out seeds (`tests/test_nanogoal_integration.py`) — not mocked. Two
-things worth recording from that verification:
-- `eval.py`'s own train/test split reconstruction has a bug: none of its
-  three `_sample_category` calls pass an explicit `pct`, so medium and
-  hard both default to 0.40 instead of the 0.60 `env.py` actually trains
-  with — meaning some of `eval.py`'s reported "test" seeds for medium/hard
-  were technically seen during training. Fixed on the Swim-IRL side
-  (`sim/nanogoal_adapter.py` uses the correct 0.40/0.60/0.60); also being
-  fixed upstream in NanoGoal-RL itself.
-- Episode length is bounded by `env.py`'s own timelimit, but that limit
-  (`min(3 + 2×initial_distance, 40)`) is in physics-time units
-  (`__timestep=0.05`), not step count — so the real per-episode cap is
-  800 `env.step()` calls, not 40. Real rollouts observed up to ~370 steps.
+**Phase 0b — infrastructure and algorithms (mechanically verified, no
+real run yet).** The NanoGoal-RL v2 submodule is integrated
+(`external/NanoGoal-RL/`, pinned; easy and medium trained models
+available, hard still training). `sim/nanogoal_adapter.py` and
+`data/simulate_nanogoal.py` are verified end-to-end against the real
+easy model on real held-out seeds (`tests/test_nanogoal_integration.py`).
+`irl/gcl.py` and `irl/airl_wrapper.py` are both fully implemented and
+each verified with a real (small-scale) training run against the real
+environment — not mocked, not just constructed-but-untested
+(`tests/test_gcl.py`, `tests/test_gcl_integration.py`). A useful sanity
+check that came for free: demonstration success rates from the loaded
+easy model matched the exact easy→medium→hard degradation pattern
+NanoGoal-RL's own README already documents (100% / 50% / 40% observed in
+one verification run) — independent evidence the adapter is wired up
+correctly, not just "runs without crashing."
 
-`irl/gcl.py` (Guided Cost Learning) is next; not yet implemented.
+None of this is a recovery *result* yet — `experiments/phase0b_gcl_training.py`
+exists (the 3×3 agent-competence × environment-mix grid, `--quick` mode
+verified end to end) but hasn't been run at real scale (`REAL_PARAMS`) as
+of this writing. That's the next step.
 
 ## Technologies used
 
@@ -293,7 +302,7 @@ things worth recording from that verification:
 - Gymnasium
 - Stable-Baselines3 (PPO — the inner policy optimizer for Guided Cost
   Learning, and reused internally by `imitation`'s AIRL)
-- `imitation` (AIRL/GAIL)
+- `imitation`==1.0.1 (AIRL/GAIL — Gleave et al. 2022, see References)
 - Matplotlib
 - JAX (optional, for differentiable components)
 - `trackpy` (optional, if starting from raw video)
@@ -318,8 +327,16 @@ Swim-IRL/
                          # flatten_observation, rollout
   irl/
     maxent_linear.py     # Phase 0a
-    gcl.py               # Guided Cost Learning / Deep MaxEnt (Phase 0b, Phase 1)
-    airl_wrapper.py       # via imitation (Phase 0b, Phase 1)
+    gcl.py               # Guided Cost Learning (Phase 0b, Phase 1) --
+                         # RewardNetwork, RewardWrappedEnv,
+                         # compute_importance_weights, reward_loss,
+                         # train_gcl -- verified against the real
+                         # easy model/environment
+    airl_wrapper.py       # AIRL via imitation (Phase 0b, Phase 1) --
+                         # FlattenedNanoGoalEnv (NOT gymnasium's
+                         # FlattenObservation, which orders Dict keys
+                         # alphabetically -- inconsistent with GCL's own
+                         # ordering, see Limitations), train_airl
   features.py             # isolable reward features
   mdp.py                   # shared TabularMDP dataclass + coord_to_state/
                             # state_to_coord — no dependencies, importable
@@ -331,7 +348,12 @@ Swim-IRL/
     simulate_nanogoal.py    # 3x3 agent x environment-mix demonstration
                               # grid generation (Phase 0b)
   eval/
-    recovery.py            # reward recovery metrics (Phase 0a/0b)
+    recovery.py            # reward recovery metrics (Phase 0a)
+    recovery_continuous.py  # sampling-based analogue of EVD for Phase
+                              # 0b -- no exact DP available in continuous
+                              # state, so compares sampled true-reward
+                              # returns instead (NOT guaranteed >= 0,
+                              # unlike Phase 0a's EVD -- see file docstring)
     predictive.py           # out-of-sample prediction (Phase 4)
     memory_diagnostic.py     # inter-turn-interval single vs double
                               # exponential check (Phase 1/2, run before
@@ -339,11 +361,19 @@ Swim-IRL/
     convergence_diagnostic.py # MaxEnt log-likelihood monotonicity check
                               # -- catches optimizer instability
                               # (too-large learning_rate) separately from
-                              # feature-identifiability issues
+                              # feature-identifiability issues (Phase 0a
+                              # only -- GCL/AIRL have no concavity
+                              # guarantee to check against)
   experiments/             # reproducible scripts, one per milestone
     phase0a_recovery.py      # Phase 0a: 3 reward modes, recovery + plot
-    plotting.py              # shared plot helpers for experiment reports
-                              # (not in eval/ -- reported results, not metrics)
+    phase0b_gcl_training.py  # Phase 0b: the 3x3 grid, GCL training +
+                              # sampled_recovery_gap + plots. --quick for
+                              # a fast end-to-end check, real params are
+                              # far more expensive -- see file docstring
+    plotting.py              # shared plot helpers for Phase 0a reports
+    plotting_phase0b.py       # shared plot helpers for Phase 0b reports
+                              # (training diagnostics, recovered-vs-true
+                              # reward scatter, 3x3 heatmap)
   tests/                   # at least the Phase 0a/0b tests
     conftest.py              # shared pytest fixtures (e.g. reference_mdp)
     test_maxent_linear.py     # irl/maxent_linear.py, vs. hand-derived values
@@ -354,6 +384,12 @@ Swim-IRL/
                               # data/simulate_nanogoal.py, against the
                               # real submodule/models -- skips cleanly if
                               # unavailable (see Installation)
+    test_gcl.py               # irl/gcl.py, pure shape/math checks, no
+                              # submodule dependency
+    test_gcl_integration.py    # irl/gcl.py's train_gcl, against the real
+                              # submodule/models -- skips cleanly if
+                              # unavailable, same pattern as
+                              # test_nanogoal_integration.py
 ```
 
 ## Installation
@@ -415,8 +451,22 @@ python -m experiments.phase0a_recovery --seed 0
 ```
 
 Runs Phase 0a's 3 reward-recovery modes end to end and regenerates
-`experiments/results/phase0a_recovery.png` (see Results below). Run as a
-module (`python -m ...`), not as a direct script (`python
+`experiments/results/phase0a_recovery.png` (see Results below).
+
+```bash
+python -m experiments.phase0b_gcl_training --seed 0 --quick
+```
+
+Runs the Phase 0b 3×3 grid (agent × environment mix) with tiny parameters
+— enough to confirm the pipeline runs end to end, not a meaningful result.
+Drop `--quick` for a real run, but see the file's own docstring first:
+`REAL_PARAMS` is far more expensive than `QUICK_PARAMS` (roughly two
+orders of magnitude more environment interaction per cell) — budget
+accordingly before launching unattended. The `hard` row is skipped
+automatically (with a warning) until `models/ppo_nanogoal_hard.zip`
+exists.
+
+Run both as modules (`python -m ...`), not as direct scripts (`python
 experiments/foo.py`) — same import-path reason as running tests via
 `python -m pytest` rather than `python tests/foo.py` directly. Every
 subsequent milestone will get its own command added here as it lands.
@@ -486,6 +536,17 @@ them and rerunning the experiment command recreates them exactly.
   hypothesis that this term is minor relative to the state-dependent
   goal-distance/collision terms — see Approach for the reasoning; this is
   untested until real Phase 0b results are in.
+- `gymnasium.wrappers.FlattenObservation` was deliberately NOT used for
+  AIRL's observation flattening: verified it orders `Dict` observation
+  keys alphabetically (`agent, delta_goal, lidar, mvt`), not the order
+  `sim/nanogoal_adapter.py`'s own `flatten_observation` uses (`agent,
+  mvt, delta_goal, lidar`), which GCL's reward network was built around.
+  Using the built-in wrapper would have silently made AIRL's state
+  representation inconsistent with GCL's, breaking any later Phase 3
+  comparison between the two recovered rewards without an error anywhere
+  to signal it. `irl/airl_wrapper.py`'s `FlattenedNanoGoalEnv` reuses
+  `flatten_observation` directly instead, guaranteeing identical
+  ordering between both methods.
 
 ## Future work
 

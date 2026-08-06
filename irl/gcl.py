@@ -96,7 +96,7 @@ def _unflatten_observations_batch(flat_obs_batch: np.ndarray) -> dict:
 def compute_importance_weights(
     reward_net: RewardNetwork,
     background_trajectories: list[dict],
-    policy: PPO,
+    policy,
 ) -> np.ndarray:
     """Self-normalized importance weights, one per background trajectory:
 
@@ -168,7 +168,7 @@ def train_gcl(
     policy_update_steps_per_iteration: int = 2048,
     reward_learning_rate: float = 1e-3,
     seed: int = 0,
-) -> tuple[RewardNetwork, PPO]:
+) -> tuple[RewardNetwork, PPO, dict]:
     """The alternating loop, once per iteration:
         1. collect n_background_trajectories_per_iteration rollouts from
            the CURRENT policy (deterministic=False -- exploration matters
@@ -181,7 +181,12 @@ def train_gcl(
            reward_net reference is updated in place -- no need to
            recreate the wrapper each iteration
 
-    Returns the trained (reward_net, policy).
+    Returns (reward_net, policy, history), where history is
+    {"loss": np.ndarray shape (n_iterations,),
+     "success_rate": np.ndarray shape (n_iterations,)} -- the background
+    rollouts' own success rate each iteration, a cheap way to see whether
+    the policy is learning to solve the task as the recovered reward
+    improves. Used by experiments/plotting_phase0b.py.
     """
     background_env = create_env(nanogoal_path)
     reward_net = RewardNetwork()
@@ -191,6 +196,9 @@ def train_gcl(
     policy = PPO("MultiInputPolicy", wrapped_env, verbose=0, seed=seed)
 
     rng = np.random.default_rng(seed)
+
+    loss_history = np.zeros(n_iterations)
+    success_rate_history = np.zeros(n_iterations)
 
     for iteration in range(n_iterations):
         background_trajectories = [
@@ -216,6 +224,15 @@ def train_gcl(
             reset_num_timesteps=False,
         )
 
-        print(f"iteration {iteration}: reward_loss={loss.item():.4f}")
+        loss_history[iteration] = loss.item()
+        success_rate_history[iteration] = np.mean(
+            [t["is_success"] for t in background_trajectories]
+        )
 
-    return reward_net, policy
+        print(
+            f"iteration {iteration}: reward_loss={loss.item():.4f}  "
+            f"background_success_rate={success_rate_history[iteration]:.2f}"
+        )
+
+    history = {"loss": loss_history, "success_rate": success_rate_history}
+    return reward_net, policy, history
