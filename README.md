@@ -54,7 +54,17 @@ give a clear reason why it doesn't.
   A reward network is trained via importance-sampled maximum-entropy IRL.
   Policy optimization is handed off to an existing RL library
   (Stable-Baselines3 / PPO), so the effort goes into the reward-learning
-  loop itself, not into reimplementing policy gradients.
+  loop itself, not into reimplementing policy gradients. The recovered
+  reward here is **state-only** (r(s), consistent with AIRL's state-only
+  design below) — a deliberate simplification, since NanoGoal-RL's actual
+  reward includes a genuinely action-dependent term (a penalty on the
+  raw `dv`/`dtheta` changes, to discourage spinning) that a state-only
+  reward structurally cannot represent. The working hypothesis is that
+  this term is minor relative to the state-dependent goal-distance and
+  collision terms, so state-only recovery should still capture the
+  dominant structure — untested until Phase 0b's results are in, and
+  exactly the kind of gap Phase 3's mechanism-consistency comparison is
+  meant to catch, not something assumed away.
 - **AIRL** (Fu, Luo & Levine, 2018) via the `imitation` library
   (HumanCompatibleAI), for a more transferable, dynamics-independent
   reward over continuous state.
@@ -208,7 +218,9 @@ other gradient conditions?
 - [ ] Phase 3 — comparison to the known mechanism
 - [ ] Phase 4 — robustness & transfer
 
-*(Phase 0a implemented and validated; Phase 0b onward not yet started)*
+*(Phase 0a implemented and validated; Phase 0b infrastructure — submodule,
+adapter, demonstration pipeline — implemented and verified; GCL/AIRL
+themselves not yet implemented)*
 
 ## Results
 
@@ -252,6 +264,28 @@ valid under a *change in the environment's own dynamics*, a dynamics-
 transfer robustness property Phase 0a's one fixed MDP was never in a
 position to test at all.
 
+**Phase 0b — infrastructure (in progress).** The NanoGoal-RL v2 submodule
+is integrated (`external/NanoGoal-RL/`, pinned; easy and medium trained
+models available, hard still training). `sim/nanogoal_adapter.py`
+(policy/environment interface) and `data/simulate_nanogoal.py` (the 3×3
+agent-competence × environment-mix demonstration grid, see Approach) are
+implemented and verified end-to-end against the real easy model on real
+held-out seeds (`tests/test_nanogoal_integration.py`) — not mocked. Two
+things worth recording from that verification:
+- `eval.py`'s own train/test split reconstruction has a bug: none of its
+  three `_sample_category` calls pass an explicit `pct`, so medium and
+  hard both default to 0.40 instead of the 0.60 `env.py` actually trains
+  with — meaning some of `eval.py`'s reported "test" seeds for medium/hard
+  were technically seen during training. Fixed on the Swim-IRL side
+  (`sim/nanogoal_adapter.py` uses the correct 0.40/0.60/0.60); also being
+  fixed upstream in NanoGoal-RL itself.
+- Episode length is bounded by `env.py`'s own timelimit, but that limit
+  (`min(3 + 2×initial_distance, 40)`) is in physics-time units
+  (`__timestep=0.05`), not step count — so the real per-episode cap is
+  800 `env.step()` calls, not 40. Real rollouts observed up to ~370 steps.
+
+`irl/gcl.py` (Guided Cost Learning) is next; not yet implemented.
+
 ## Technologies used
 
 - Python
@@ -279,7 +313,9 @@ Swim-IRL/
     features_gridworld.py # Phase 0a-only toy features (dist-to-goal,
                           # dist-to-obstacle) — separate from features.py,
                           # which is reserved for the real worm features
-    nanogoal_adapter.py  # thin wrapper exposing NanoGoal-RL's env as-is (Phase 0b)
+    nanogoal_adapter.py  # NanoGoal-RL's env/policies as-is (Phase 0b) --
+                         # create_env, load_test_seeds, load_policy,
+                         # flatten_observation, rollout
   irl/
     maxent_linear.py     # Phase 0a
     gcl.py               # Guided Cost Learning / Deep MaxEnt (Phase 0b, Phase 1)
@@ -292,6 +328,8 @@ Swim-IRL/
   data/
     loaders.py            # loading + cleaning of real trajectories
     simulate.py            # ground-truth trajectory generation (Phase 0a)
+    simulate_nanogoal.py    # 3x3 agent x environment-mix demonstration
+                              # grid generation (Phase 0b)
   eval/
     recovery.py            # reward recovery metrics (Phase 0a/0b)
     predictive.py           # out-of-sample prediction (Phase 4)
@@ -312,6 +350,10 @@ Swim-IRL/
     test_recovery.py          # eval/recovery.py
     test_simulate.py          # data/simulate.py
     test_convergence_diagnostic.py # eval/convergence_diagnostic.py
+    test_nanogoal_integration.py # sim/nanogoal_adapter.py +
+                              # data/simulate_nanogoal.py, against the
+                              # real submodule/models -- skips cleanly if
+                              # unavailable (see Installation)
 ```
 
 ## Installation
@@ -437,6 +479,13 @@ them and rerunning the experiment command recreates them exactly.
   regression test (`tests/test_convergence_diagnostic.py`, using
   `eval/convergence_diagnostic.py`) so a learning rate creeping back up
   gets caught automatically instead of silently producing a bad theta_hat.
+- Phase 0b's recovered reward is state-only (`r(s)`), but NanoGoal-RL's
+  actual reward has a genuinely action-dependent term (a penalty on
+  `dv`/`dtheta` changes, discouraging spinning) that a state-only reward
+  structurally cannot represent. Proceeding anyway on the working
+  hypothesis that this term is minor relative to the state-dependent
+  goal-distance/collision terms — see Approach for the reasoning; this is
+  untested until real Phase 0b results are in.
 
 ## Future work
 

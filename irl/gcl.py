@@ -12,8 +12,9 @@ sampling policy.
 
 Reward is state-only (r_theta(s), not r_theta(s,a)) -- consistent with
 AIRL's state-only design (see irl/airl_wrapper.py, once written) and with
-this project's existing feature philosophy (all five worm-feature
-candidates in the README are state functions too).
+this project's existing feature philosophy. Known simplification: see
+README Limitations for why this can't represent NanoGoal-RL's actual
+action-dependent effort/spinning penalty.
 
 The policy trained here starts from SCRATCH (random init) -- it is NOT
 warm-started from the loaded easy/medium/hard checkpoints. Those are only
@@ -23,18 +24,19 @@ already solves the task, defeating the point of testing whether GCL can
 recover a competent policy from demonstrations alone.
 '''
 import numpy as np
+import scipy.special
 import torch
 import torch.nn as nn
+import gymnasium as gym
+from stable_baselines3 import PPO
+
+from sim.nanogoal_adapter import flatten_observation, create_env, rollout
 
 
 class RewardNetwork(nn.Module):
     # small MLP: flattened observation (15,) -> scalar reward.
-    # Architecture is your call -- 2-3 hidden layers, ~32-64 units each,
-    # is a reasonable starting point, not something to over-engineer yet.
     def __init__(self, obs_dim: int = 15, hidden_dim: int = 64):
         super().__init__()
-        
-        # Regroupement des couches de manière séquentielle
         self.network = nn.Sequential(
             nn.Linear(obs_dim, hidden_dim),
             nn.ReLU(),
@@ -44,55 +46,86 @@ class RewardNetwork(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, 1)
+            nn.Linear(hidden_dim, 1),
         )
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         # obs: shape (batch, 15)
-        # returns: shape (batch,) -- scalar reward per state
-        ...
+        # returns: shape (batch,) -- squeeze the trailing singleton dim
+        # from the last Linear(hidden_dim, 1) layer, or every batched
+        # use downstream (importance weights, reward_loss) silently
+        # broadcasts wrong via (batch,1) * (batch,) -> (batch,batch)
+        return self.network(obs).squeeze(-1)
 
 
-class RewardWrappedEnv:
-    """Gym wrapper: same observation/action space as the real NanoGoal
-    env, but step() returns reward_net(obs) instead of the environment's
-    own true reward. This is the mechanism that lets SB3's ordinary
-    PPO.learn() train the policy against the CURRENT reward estimate,
-    with zero changes to SB3 itself -- exactly the 'hand policy
-    optimization off to an existing RL library' plan from the README.
+class RewardWrappedEnv(gym.Wrapper):
+    """Same observation/action space as the real NanoGoal env (inherited
+    from gym.Wrapper -- reset(), observation_space, action_space, etc.
+    all pass through automatically), but step() returns reward_net(obs)
+    instead of the environment's own true reward. This is what lets
+    SB3's ordinary PPO.learn() train the policy against the CURRENT
+    reward estimate, with zero changes to SB3 itself.
     """
     def __init__(self, env, reward_net: RewardNetwork):
-        ...
+        super().__init__(env)
+        self.reward_net = reward_net
 
     def step(self, action):
-        # calls the real env.step(action) for dynamics/termination, but
-        # replaces the returned reward with
-        # reward_net(flatten_observation(obs)).item()
-        ...
+        obs, _true_reward, terminated, truncated, info = self.env.step(action)
+
+        obs_tensor = torch.from_numpy(flatten_observation(obs)).float().unsqueeze(0)
+        with torch.no_grad():
+            reward = self.reward_net(obs_tensor).item()
+
+        return obs, reward, terminated, truncated, info
+
+
+def _unflatten_observations_batch(flat_obs_batch: np.ndarray) -> dict:
+    """Inverse of sim.nanogoal_adapter.flatten_observation, batched.
+    Needed because rollout() only stores the flattened form, but SB3's
+    MultiInputPolicy needs the original Dict structure to evaluate
+    log-probabilities of actions. flat_obs_batch: shape (N, 15)."""
+    return {
+        "agent": torch.from_numpy(flat_obs_batch[:, 0:2]).float(),
+        "mvt": torch.from_numpy(flat_obs_batch[:, 2:5]).float(),
+        "delta_goal": torch.from_numpy(flat_obs_batch[:, 5:7]).float(),
+        "lidar": torch.from_numpy(flat_obs_batch[:, 7:15]).float(),
+    }
 
 
 def compute_importance_weights(
     reward_net: RewardNetwork,
-    background_trajectories: list[dict],  # same format as
-                                           # sim.nanogoal_adapter.rollout's
-                                           # return value
-    policy,  # the SB3 PPO model that generated background_trajectories
+    background_trajectories: list[dict],
+    policy: PPO,
 ) -> np.ndarray:
     """Self-normalized importance weights, one per background trajectory:
 
-        w_i = [exp(sum_t r_theta(s_t)) / q(trajectory_i)]
-              -------------------------------------------
-                   sum_j [exp(sum_t r_theta(s_t)) / q(trajectory_j)]
+        w_i = softmax_i( sum_t r_theta(s_t) - sum_t log pi_phi(a_t|s_t) )
 
-    where q(trajectory) = prod_t pi_phi(a_t | s_t), evaluated via the
-    policy's own action-distribution log-prob (SB3:
-    policy.policy.get_distribution(obs).log_prob(action), summed over t
-    in log-space then exponentiated -- same logsumexp-style numerical
-    care as backward_pass, for the same reason).
+    Same log-space computation as backward_pass's logsumexp, for the same
+    numerical-stability reason -- never exponentiate the raw (unbounded)
+    sum_t r_theta(s_t) directly.
 
     Returns shape (len(background_trajectories),), summing to 1.
     """
-    ...
+    log_ratios = []
+    for traj in background_trajectories:
+        obs_all = torch.from_numpy(traj["observations"]).float()       # (T+1, 15)
+        obs_for_actions = traj["observations"][:-1]                     # (T, 15)
+        actions = torch.from_numpy(traj["actions"]).float()             # (T, 2)
+
+        with torch.no_grad():
+            trajectory_reward = reward_net(obs_all).sum()
+
+            obs_dict = _unflatten_observations_batch(obs_for_actions)
+            _, log_probs, _ = policy.policy.evaluate_actions(obs_dict, actions)
+            log_q = log_probs.sum()
+
+        log_ratios.append((trajectory_reward - log_q).item())
+
+    log_ratios = np.array(log_ratios)
+    log_Z = scipy.special.logsumexp(log_ratios)
+    return np.exp(log_ratios - log_Z)
 
 
 def reward_loss(
@@ -106,14 +139,25 @@ def reward_loss(
 
         L(theta) = -mean_demo[ r_theta(tau) ] + sum_i w_i * r_theta(sigma_i)
 
-    where r_theta(tau) = sum_t r_theta(s_t) (summed along a whole
-    trajectory). First term pushes reward up on demonstrated states --
-    the direct analogue of Ziebart's "empirical" term. Second term pushes
-    it down on states the importance-weighted background samples suggest
-    the current reward over-favors -- the analogue of Ziebart's
-    "expected" term, now Monte-Carlo-estimated instead of exact-DP-summed.
+    First term (gradient flows -- no torch.no_grad here, unlike
+    compute_importance_weights) pushes reward up on demonstrated states.
+    Second term pushes it down on states the importance-weighted
+    background samples suggest the current reward over-favors.
     """
-    ...
+    demo_rewards = [
+        reward_net(torch.from_numpy(demo["observations"]).float()).sum()
+        for demo in demonstrations
+    ]
+    demo_term = torch.stack(demo_rewards).mean()
+
+    background_rewards = torch.stack([
+        reward_net(torch.from_numpy(traj["observations"]).float()).sum()
+        for traj in background_trajectories
+    ])
+    weights_tensor = torch.from_numpy(importance_weights).float()
+    background_term = (weights_tensor * background_rewards).sum()
+
+    return -demo_term + background_term
 
 
 def train_gcl(
@@ -123,21 +167,55 @@ def train_gcl(
     n_background_trajectories_per_iteration: int = 20,
     policy_update_steps_per_iteration: int = 2048,
     reward_learning_rate: float = 1e-3,
-) -> tuple[RewardNetwork, "PPO"]:
+    seed: int = 0,
+) -> tuple[RewardNetwork, PPO]:
     """The alternating loop, once per iteration:
         1. collect n_background_trajectories_per_iteration rollouts from
-           the CURRENT policy (sim.nanogoal_adapter.rollout,
-           deterministic=False this time -- exploration matters here,
-           unlike demonstration generation, since these samples are what
-           estimate the partition function across the whole state space,
-           not a record of best-known behavior)
+           the CURRENT policy (deterministic=False -- exploration matters
+           here, unlike demonstration generation, since these samples
+           estimate the partition function across the state space, not a
+           record of best-known behavior)
         2. importance_weights = compute_importance_weights(...)
-        3. one (or a few) gradient step(s) on
-           reward_loss(reward_net, demonstrations, background, weights)
-        4. policy.learn(total_timesteps=policy_update_steps_per_iteration,
-           env=RewardWrappedEnv(create_env(nanogoal_path), reward_net))
-           -- policy tracks the CURRENT reward estimate
+        3. one gradient step on reward_loss(...)
+        4. policy.learn(...) against the SAME wrapped_env object, whose
+           reward_net reference is updated in place -- no need to
+           recreate the wrapper each iteration
 
     Returns the trained (reward_net, policy).
     """
-    ...
+    background_env = create_env(nanogoal_path)
+    reward_net = RewardNetwork()
+    optimizer = torch.optim.Adam(reward_net.parameters(), lr=reward_learning_rate)
+
+    wrapped_env = RewardWrappedEnv(create_env(nanogoal_path), reward_net)
+    policy = PPO("MultiInputPolicy", wrapped_env, verbose=0, seed=seed)
+
+    rng = np.random.default_rng(seed)
+
+    for iteration in range(n_iterations):
+        background_trajectories = [
+            rollout(
+                background_env, policy,
+                seed=int(rng.integers(0, 1_000_000)),
+                deterministic=False,
+            )
+            for _ in range(n_background_trajectories_per_iteration)
+        ]
+
+        importance_weights = compute_importance_weights(
+            reward_net, background_trajectories, policy
+        )
+
+        optimizer.zero_grad()
+        loss = reward_loss(reward_net, demonstrations, background_trajectories, importance_weights)
+        loss.backward()
+        optimizer.step()
+
+        policy.learn(
+            total_timesteps=policy_update_steps_per_iteration,
+            reset_num_timesteps=False,
+        )
+
+        print(f"iteration {iteration}: reward_loss={loss.item():.4f}")
+
+    return reward_net, policy
