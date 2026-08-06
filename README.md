@@ -134,6 +134,18 @@ corresponding phase.
   (HumanCompatibleAI/imitation, verified against v1.0.1). Cited here for
   the same reason the papers are: the actual adversarial training loop in
   AIRL is this library's, not reimplemented in this project (unlike GCL).
+  ```bibtex
+  @misc{gleave2022imitation,
+    author = {Gleave, Adam and Taufeeque, Mohammad and Rocamonde, Juan and Jenner, Erik and Wang, Steven H. and Toyer, Sam and Ernestus, Maximilian and Belrose, Nora and Emmons, Scott and Russell, Stuart},
+    title = {imitation: Clean Imitation Learning Implementations},
+    year = {2022},
+    howPublished = {arXiv:2211.11972v1 [cs.LG]},
+    archivePrefix = {arXiv},
+    eprint = {2211.11972},
+    primaryClass = {cs.LG},
+    url = {https://arxiv.org/abs/2211.11972},
+  }
+  ```
 
 ## Roadmap (phases)
 
