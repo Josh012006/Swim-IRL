@@ -11,10 +11,10 @@ step (1) don't blow up the way they would against a fixed, unrelated
 sampling policy.
 
 Reward is state-only (r_theta(s), not r_theta(s,a)) -- consistent with
-AIRL's state-only design (see irl/airl_wrapper.py, once written) and with
-this project's existing feature philosophy. Known simplification: see
-README Limitations for why this can't represent NanoGoal-RL's actual
-action-dependent effort/spinning penalty.
+AIRL's state-only design (see irl/airl_wrapper.py) and this project's
+existing feature philosophy. Known simplification: see README Limitations
+for why this can't represent NanoGoal-RL's actual action-dependent
+effort/spinning penalty.
 
 The policy trained here starts from SCRATCH (random init) -- it is NOT
 warm-started from the loaded easy/medium/hard checkpoints. Those are only
@@ -22,15 +22,44 @@ used to GENERATE demonstrations (see data/simulate_nanogoal.py); using
 them to also seed GCL's own learner would quietly hand it a policy that
 already solves the task, defeating the point of testing whether GCL can
 recover a competent policy from demonstrations alone.
+
+PARALLELISM -- read before changing n_envs: SubprocVecEnv spawns each
+sub-environment in a SEPARATE OS PROCESS. RewardWrappedEnv's reward_net
+gets PICKLED into every worker at construction time, becoming an
+INDEPENDENT COPY in each process from that point on -- updating reward_net
+in the main process via optimizer.step() does NOT propagate to the
+workers' copies automatically (verified directly: a worker kept computing
+reward from iteration-0 weights indefinitely without this fix). Every
+iteration, after optimizer.step(), we push the updated weights across the
+process boundary explicitly via
+`vec_env.env_method("set_reward_net_state", ...)`, which SB3's VecEnv
+mechanism resolves through Monitor -> SeedModeEnv -> RewardWrappedEnv
+(verified) -- currently raises a gymnasium deprecation warning
+(`env.method_name` wrapper-attribute delegation is deprecated in favor of
+`get_wrapper_attr`), harmless today but SB3's own internal implementation,
+not something patchable from here -- worth re-checking on a future SB3
+upgrade.
 '''
+import json
+import os
+
 import numpy as np
 import scipy.special
 import torch
 import torch.nn as nn
 import gymnasium as gym
 from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import SubprocVecEnv
+from stable_baselines3.common.monitor import Monitor
 
-from sim.nanogoal_adapter import flatten_observation, create_env, rollout
+from sim.nanogoal_adapter import (
+    flatten_observation,
+    create_env,
+    rollout,
+    load_test_seeds,
+    sample_seed_from_mode,
+    SeedModeEnv,
+)
 
 
 class RewardNetwork(nn.Module):
@@ -60,11 +89,10 @@ class RewardNetwork(nn.Module):
 
 class RewardWrappedEnv(gym.Wrapper):
     """Same observation/action space as the real NanoGoal env (inherited
-    from gym.Wrapper -- reset(), observation_space, action_space, etc.
-    all pass through automatically), but step() returns reward_net(obs)
-    instead of the environment's own true reward. This is what lets
-    SB3's ordinary PPO.learn() train the policy against the CURRENT
-    reward estimate, with zero changes to SB3 itself.
+    from gym.Wrapper), but step() returns reward_net(obs) instead of the
+    environment's own true reward. This is what lets SB3's ordinary
+    PPO.learn() train the policy against the CURRENT reward estimate,
+    with zero changes to SB3 itself.
     """
     def __init__(self, env, reward_net: RewardNetwork):
         super().__init__(env)
@@ -78,6 +106,13 @@ class RewardWrappedEnv(gym.Wrapper):
             reward = self.reward_net(obs_tensor).item()
 
         return obs, reward, terminated, truncated, info
+
+    def set_reward_net_state(self, state_dict):
+        """Called via vec_env.env_method() from the main process after
+        every optimizer.step() -- see module docstring PARALLELISM note.
+        Never called directly for n_envs=1 (no subprocess boundary to
+        cross there), but harmless either way."""
+        self.reward_net.load_state_dict(state_dict)
 
 
 def _unflatten_observations_batch(flat_obs_batch: np.ndarray) -> dict:
@@ -96,7 +131,7 @@ def _unflatten_observations_batch(flat_obs_batch: np.ndarray) -> dict:
 def compute_importance_weights(
     reward_net: RewardNetwork,
     background_trajectories: list[dict],
-    policy,
+    policy: PPO,
 ) -> np.ndarray:
     """Self-normalized importance weights, one per background trajectory:
 
@@ -139,10 +174,11 @@ def reward_loss(
 
         L(theta) = -mean_demo[ r_theta(tau) ] + sum_i w_i * r_theta(sigma_i)
 
-    First term (gradient flows -- no torch.no_grad here, unlike
-    compute_importance_weights) pushes reward up on demonstrated states.
-    Second term pushes it down on states the importance-weighted
-    background samples suggest the current reward over-favors.
+    where r_theta(tau) = sum_t r_theta(s_t). First term (gradient flows --
+    no torch.no_grad here, unlike compute_importance_weights) pushes
+    reward up on demonstrated states. Second term pushes it down on
+    states the importance-weighted background samples suggest the current
+    reward over-favors.
     """
     demo_rewards = [
         reward_net(torch.from_numpy(demo["observations"]).float()).sum()
@@ -160,51 +196,137 @@ def reward_loss(
     return -demo_term + background_term
 
 
+def _save_checkpoint(checkpoint_dir: str, reward_net, optimizer, policy, iteration,
+                      loss_history, success_rate_history):
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    torch.save(reward_net.state_dict(), os.path.join(checkpoint_dir, "reward_net.pt"))
+    torch.save(optimizer.state_dict(), os.path.join(checkpoint_dir, "optimizer.pt"))
+    policy.save(os.path.join(checkpoint_dir, "policy"))
+    with open(os.path.join(checkpoint_dir, "state.json"), "w") as f:
+        json.dump({
+            "iteration": iteration,
+            "loss_history": loss_history,
+            "success_rate_history": success_rate_history,
+        }, f)
+    print(f"[checkpoint] saved at iteration {iteration} -> {checkpoint_dir}")
+
+
+def _load_checkpoint(checkpoint_dir: str, reward_net, optimizer):
+    reward_net.load_state_dict(torch.load(os.path.join(checkpoint_dir, "reward_net.pt")))
+    optimizer.load_state_dict(torch.load(os.path.join(checkpoint_dir, "optimizer.pt")))
+    with open(os.path.join(checkpoint_dir, "state.json")) as f:
+        state = json.load(f)
+    return state["iteration"], state["loss_history"], state["success_rate_history"]
+
+
 def train_gcl(
     nanogoal_path: str,
     demonstrations: list[dict],
+    seed_mode: str,
+    total_timesteps: int,
     n_iterations: int = 100,
     n_background_trajectories_per_iteration: int = 20,
-    policy_update_steps_per_iteration: int = 2048,
     reward_learning_rate: float = 1e-3,
+    n_envs: int = 1,
     seed: int = 0,
+    checkpoint_dir: str | None = None,
+    checkpoint_every: int = 10,
 ) -> tuple[RewardNetwork, PPO, dict]:
     """The alternating loop, once per iteration:
         1. collect n_background_trajectories_per_iteration rollouts from
-           the CURRENT policy (deterministic=False -- exploration matters
-           here, unlike demonstration generation, since these samples
-           estimate the partition function across the state space, not a
-           record of best-known behavior)
+           the CURRENT policy, with seeds drawn from seed_mode's own
+           difficulty-respecting pool (deterministic=False -- exploration
+           matters here, unlike demonstration generation)
         2. importance_weights = compute_importance_weights(...)
         3. one gradient step on reward_loss(...)
-        4. policy.learn(...) against the SAME wrapped_env object, whose
-           reward_net reference is updated in place -- no need to
-           recreate the wrapper each iteration
+        4. push the updated reward_net weights to every parallel worker
+           (see module docstring PARALLELISM note)
+        5. policy.learn(total_timesteps // n_iterations, ...)
+
+    total_timesteps is the OVERALL policy-training budget for this
+    seed_mode (see experiments/phase0b_gcl_training.py's BUDGET table --
+    calibrated against NanoGoal-RL's own reported easy/medium/hard
+    timesteps-to-convergence, not picked arbitrarily). Divided evenly
+    across n_iterations; each chunk runs via one policy.learn() call.
+
+    n_envs > 1 uses SubprocVecEnv for real parallelism (mirrors
+    NanoGoal-RL's own train_*.py pattern) -- each worker gets an
+    independently-seeded SeedModeEnv (seed + 1000*worker_idx) so parallel
+    workers explore different episodes instead of following an identical
+    sequence in lockstep, the same worker_seed_offset problem NanoGoal-RL
+    itself documents having fixed.
+
+    checkpoint_dir, if given, saves reward_net/optimizer/policy state
+    every checkpoint_every iterations, and resumes automatically from
+    there if a checkpoint already exists at that path -- unattended
+    multi-hour runs should always set this.
 
     Returns (reward_net, policy, history), where history is
-    {"loss": np.ndarray shape (n_iterations,),
-     "success_rate": np.ndarray shape (n_iterations,)} -- the background
-    rollouts' own success rate each iteration, a cheap way to see whether
-    the policy is learning to solve the task as the recovered reward
-    improves. Used by experiments/plotting_phase0b.py.
+    {"loss": np.ndarray, "success_rate": np.ndarray} -- one entry per
+    completed iteration (including any before a resume).
     """
-    background_env = create_env(nanogoal_path)
+    policy_update_steps_per_iteration = total_timesteps // n_iterations
+
+    test_seeds = load_test_seeds(nanogoal_path)
+    background_env = create_env(nanogoal_path)  # sequential, single-process --
+                                                  # background sampling volume
+                                                  # (tens per iteration) is
+                                                  # negligible next to
+                                                  # policy.learn()'s own
+                                                  # rollout collection, not
+                                                  # worth parallelizing too
+
     reward_net = RewardNetwork()
     optimizer = torch.optim.Adam(reward_net.parameters(), lr=reward_learning_rate)
 
-    wrapped_env = RewardWrappedEnv(create_env(nanogoal_path), reward_net)
-    policy = PPO("MultiInputPolicy", wrapped_env, verbose=0, seed=seed)
+    start_iteration = 0
+    loss_history = []
+    success_rate_history = []
 
-    rng = np.random.default_rng(seed)
+    resuming = bool(checkpoint_dir) and os.path.exists(
+        os.path.join(checkpoint_dir, "state.json")  # type: ignore[arg-type]
+    )
+    if resuming:
+        assert checkpoint_dir is not None  # narrowing: bool(checkpoint_dir) guarantees str
+        start_iteration, loss_history, success_rate_history = _load_checkpoint(
+            checkpoint_dir, reward_net, optimizer
+        )
+        print(f"[checkpoint] resuming from iteration {start_iteration}/{n_iterations}")
 
-    loss_history = np.zeros(n_iterations)
-    success_rate_history = np.zeros(n_iterations)
+    def make_env(worker_idx):
+        def _init():
+            base_env = create_env(nanogoal_path)
+            wrapped = RewardWrappedEnv(base_env, reward_net)
+            seeded = SeedModeEnv(
+                wrapped, test_seeds, seed_mode,
+                rng=np.random.default_rng(seed + 1000 * worker_idx),
+            )
+            return Monitor(seeded)
+        return _init
 
-    for iteration in range(n_iterations):
+    vec_env = SubprocVecEnv([make_env(i) for i in range(n_envs)])
+
+    if resuming:
+        assert checkpoint_dir is not None  # narrowing: same guard as above
+        policy = PPO.load(
+            os.path.join(checkpoint_dir, "policy"), env=vec_env, device="cpu"
+        )
+    else:
+        policy = PPO(
+            "MultiInputPolicy", vec_env, verbose=0, seed=seed, device="cpu",
+            n_steps=max(1, 20_000 // n_envs),  # mirrors NanoGoal-RL's own
+                                                 # train_*.py n_steps sizing
+        )
+
+    rng = np.random.default_rng(seed + 999_999)  # separate stream from
+                                                    # workers' own, for
+                                                    # background sampling
+
+    for iteration in range(start_iteration, n_iterations):
         background_trajectories = [
             rollout(
                 background_env, policy,
-                seed=int(rng.integers(0, 1_000_000)),
+                seed=sample_seed_from_mode(test_seeds, seed_mode, rng),
                 deterministic=False,
             )
             for _ in range(n_background_trajectories_per_iteration)
@@ -219,20 +341,39 @@ def train_gcl(
         loss.backward()
         optimizer.step()
 
+        # push updated weights across the process boundary -- see module
+        # docstring PARALLELISM note; a no-op in effect for n_envs=1 but
+        # always called for a single code path regardless of n_envs
+        vec_env.env_method("set_reward_net_state", reward_net.state_dict())
+
         policy.learn(
             total_timesteps=policy_update_steps_per_iteration,
             reset_num_timesteps=False,
         )
 
-        loss_history[iteration] = loss.item()
-        success_rate_history[iteration] = np.mean(
-            [t["is_success"] for t in background_trajectories]
+        loss_history.append(loss.item())
+        success_rate_history.append(
+            float(np.mean([t["is_success"] for t in background_trajectories]))
         )
 
         print(
-            f"iteration {iteration}: reward_loss={loss.item():.4f}  "
-            f"background_success_rate={success_rate_history[iteration]:.2f}"
+            f"iteration {iteration + 1}/{n_iterations}: "
+            f"reward_loss={loss.item():.4f}  "
+            f"background_success_rate={success_rate_history[-1]:.2f}  "
+            f"policy_steps_so_far={policy.num_timesteps}"
         )
 
-    history = {"loss": loss_history, "success_rate": success_rate_history}
+        if checkpoint_dir and (iteration + 1) % checkpoint_every == 0:
+            assert checkpoint_dir is not None  # narrowing: bool(checkpoint_dir) guarantees str
+            _save_checkpoint(
+                checkpoint_dir, reward_net, optimizer, policy, iteration + 1,
+                loss_history, success_rate_history,
+            )
+
+    vec_env.close()
+
+    history = {
+        "loss": np.array(loss_history),
+        "success_rate": np.array(success_rate_history),
+    }
     return reward_net, policy, history

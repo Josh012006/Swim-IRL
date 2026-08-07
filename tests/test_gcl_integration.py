@@ -36,10 +36,10 @@ def test_train_gcl_runs_and_produces_finite_history():
     )
 
     _reward_net, _policy, history = train_gcl(
-        NANOGOAL_PATH, demonstrations,
+        NANOGOAL_PATH, demonstrations, seed_mode="easy",
+        total_timesteps=4096,
         n_iterations=2,
         n_background_trajectories_per_iteration=3,
-        policy_update_steps_per_iteration=256,
     )
 
     assert len(history["loss"]) == 2

@@ -61,8 +61,9 @@ def evaluate_policy_under_true_reward(
 
 
 def sampled_recovery_gap(
-    env,
+    expert_env,
     expert_policy,
+    recovered_env,
     recovered_policy,
     seeds: list[int],
     deterministic: bool = True,
@@ -74,6 +75,15 @@ def sampled_recovery_gap(
     reward; positive = the recovered-reward policy underperforms; a small
     negative value is possible (see module docstring) and not a bug.
 
+    expert_env and recovered_env are separate parameters, not one shared
+    env: expert_policy and the GCL-recovered policy both use NanoGoal-RL's
+    native Dict observation (MultiInputPolicy), but AIRL's recovered
+    policy is trained on the flattened Box(15,) representation
+    (irl/airl_wrapper.py's FlattenedNanoGoalEnv) -- passing the wrong env
+    to the wrong policy fails immediately with a clear assertion error
+    from SB3 itself (verified), not a silent wrong number, but the two
+    envs still need to be supplied correctly by the caller.
+
     Returns:
         {
             "expert": evaluate_policy_under_true_reward(...) result,
@@ -83,10 +93,10 @@ def sampled_recovery_gap(
         }
     """
     expert_results = evaluate_policy_under_true_reward(
-        env, expert_policy, seeds, deterministic
+        expert_env, expert_policy, seeds, deterministic
     )
     recovered_results = evaluate_policy_under_true_reward(
-        env, recovered_policy, seeds, deterministic
+        recovered_env, recovered_policy, seeds, deterministic
     )
     return {
         "expert": expert_results,

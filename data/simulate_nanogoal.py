@@ -18,13 +18,10 @@ whichever category the policy happens to succeed at more often.
 """
 import numpy as np
 
-from sim.nanogoal_adapter import create_env, load_test_seeds, load_policy, rollout
-
-SEED_MODE_PROPORTIONS = {
-    "easy": {"easy": 1.0},
-    "easy_medium": {"easy": 0.5, "medium": 0.5},
-    "mixed": {"easy": 1 / 3, "medium": 1 / 3, "hard": 1 / 3},
-}
+from sim.nanogoal_adapter import (
+    create_env, load_test_seeds, load_policy, rollout,
+    SEED_MODE_PROPORTIONS,
+)
 
 
 def generate_nanogoal_demonstrations(
