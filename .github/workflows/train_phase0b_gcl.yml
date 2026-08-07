@@ -27,13 +27,12 @@ jobs:
       - name: Read train_phase0b_gcl.flag
         id: read_flag
         run: |
-          set -e
           FLAG_FILE=".github/ci/train_phase0b_gcl.flag"
           if [ ! -f "$FLAG_FILE" ]; then
             echo "train=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          while IFS='=' read -r key value; do
+          while IFS='=' read -r key value || [ -n "$key" ]; do
             [ -z "$key" ] && continue
             [ "$key" = "train" ] && echo "train=$value" >> "$GITHUB_OUTPUT"
           done < "$FLAG_FILE"
