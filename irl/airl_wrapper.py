@@ -113,6 +113,8 @@ def train_airl(
     seed: int = 0,
     checkpoint_dir: str | None = None,
     checkpoint_every: int = 1_000_000,
+    tb_log_dir: str | None = None,
+    tb_log_name: str = "airl",
 ) -> tuple[RewardNet, PPO]:
     """Wires our environment/demonstrations into imitation's AIRL
     trainer. The policy (gen_algo) starts from scratch, same reasoning as
@@ -166,7 +168,8 @@ def train_airl(
             timesteps_done = json.load(f)["timesteps_done"]
         print(f"[checkpoint] resuming from {timesteps_done}/{n_training_steps} timesteps")
     else:
-        gen_algo = PPO("MlpPolicy", venv, seed=seed, verbose=0, device="cpu")
+        gen_algo = PPO("MlpPolicy", venv, seed=seed, verbose=1, device="cpu",
+                       tensorboard_log=tb_log_dir)
 
     airl_trainer = AIRL(
         demonstrations=imitation_demonstrations,

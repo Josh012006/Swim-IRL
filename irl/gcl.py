@@ -231,6 +231,8 @@ def train_gcl(
     seed: int = 0,
     checkpoint_dir: str | None = None,
     checkpoint_every: int = 10,
+    tb_log_dir: str | None = None,
+    tb_log_name: str = "gcl",
 ) -> tuple[RewardNetwork, PPO, dict]:
     """The alternating loop, once per iteration:
         1. collect n_background_trajectories_per_iteration rollouts from
@@ -261,10 +263,19 @@ def train_gcl(
     there if a checkpoint already exists at that path -- unattended
     multi-hour runs should always set this.
 
+    tb_log_dir/tb_log_name: if given, writes GCL-specific scalars
+    (reward_loss, background_success_rate, policy_steps) to TensorBoard
+    via SummaryWriter. PPO's OWN internal metrics (entropy, value_loss,
+    policy_gradient_loss, etc.) are written separately by SB3 to the same
+    directory automatically via policy.learn(tensorboard_log=...) -- both
+    streams appear together in the same TensorBoard run.
+
     Returns (reward_net, policy, history), where history is
     {"loss": np.ndarray, "success_rate": np.ndarray} -- one entry per
     completed iteration (including any before a resume).
     """
+    from torch.utils.tensorboard import SummaryWriter
+
     policy_update_steps_per_iteration = total_timesteps // n_iterations
 
     test_seeds = load_test_seeds(nanogoal_path)
@@ -306,16 +317,28 @@ def train_gcl(
 
     vec_env = SubprocVecEnv([make_env(i) for i in range(n_envs)])
 
+    # SummaryWriter for GCL-specific metrics (reward_loss,
+    # background_success_rate). PPO's own metrics (entropy, value_loss,
+    # policy_gradient_loss, clip_fraction, etc.) are written separately
+    # by SB3 to the same directory via policy.learn(tensorboard_log=...)
+    # -- both streams appear together in the same TensorBoard run.
+    writer: "SummaryWriter | None" = (
+        SummaryWriter(log_dir=os.path.join(tb_log_dir, tb_log_name))
+        if tb_log_dir else None
+    )
+
     if resuming:
         assert checkpoint_dir is not None  # narrowing: same guard as above
         policy = PPO.load(
-            os.path.join(checkpoint_dir, "policy"), env=vec_env, device="cpu"
+            os.path.join(checkpoint_dir, "policy"), env=vec_env, device="cpu",
+            tensorboard_log=tb_log_dir,
         )
     else:
         policy = PPO(
-            "MultiInputPolicy", vec_env, verbose=0, seed=seed, device="cpu",
+            "MultiInputPolicy", vec_env, verbose=1, seed=seed, device="cpu",
             n_steps=max(1, 20_000 // n_envs),  # mirrors NanoGoal-RL's own
                                                  # train_*.py n_steps sizing
+            tensorboard_log=tb_log_dir,
         )
 
     rng = np.random.default_rng(seed + 999_999)  # separate stream from
@@ -349,17 +372,23 @@ def train_gcl(
         policy.learn(
             total_timesteps=policy_update_steps_per_iteration,
             reset_num_timesteps=False,
+            tb_log_name=tb_log_name,
         )
 
+        bg_success_rate = float(np.mean([t["is_success"] for t in background_trajectories]))
         loss_history.append(loss.item())
-        success_rate_history.append(
-            float(np.mean([t["is_success"] for t in background_trajectories]))
-        )
+        success_rate_history.append(bg_success_rate)
+
+        if writer is not None:
+            writer.add_scalar("gcl/reward_loss", loss.item(), policy.num_timesteps)
+            writer.add_scalar("gcl/background_success_rate", bg_success_rate, policy.num_timesteps)
+            writer.add_scalar("gcl/iteration", iteration + 1, policy.num_timesteps)
+            writer.flush()
 
         print(
             f"iteration {iteration + 1}/{n_iterations}: "
             f"reward_loss={loss.item():.4f}  "
-            f"background_success_rate={success_rate_history[-1]:.2f}  "
+            f"background_success_rate={bg_success_rate:.2f}  "
             f"policy_steps_so_far={policy.num_timesteps}"
         )
 
@@ -370,6 +399,8 @@ def train_gcl(
                 loss_history, success_rate_history,
             )
 
+    if writer is not None:
+        writer.close()
     vec_env.close()
 
     history = {

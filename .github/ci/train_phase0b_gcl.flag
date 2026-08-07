@@ -1,0 +1,10 @@
+train=false
+train_easy_easy=false
+train_easy_easy_medium=false
+train_easy_mixed=false
+train_medium_easy=false
+train_medium_easy_medium=false
+train_medium_mixed=false
+train_hard_easy=false
+train_hard_easy_medium=false
+train_hard_mixed=false

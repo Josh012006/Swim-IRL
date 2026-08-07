@@ -1,0 +1,95 @@
+name: Phase 0b — AIRL training
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  train:
+    runs-on: [self-hosted, linux]
+    timeout-minutes: 720
+
+    env:
+      VENV: .venv/bin
+
+    steps:
+      - name: Fetch code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
+
+      - name: Read train_phase0b_airl.flag
+        id: read_flag
+        run: |
+          set -e
+          FLAG_FILE=".github/ci/train_phase0b_airl.flag"
+          if [ ! -f "$FLAG_FILE" ]; then
+            echo "train=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          while IFS='=' read -r key value; do
+            [ -z "$key" ] && continue
+            [ "$key" = "train" ] && echo "train=$value" >> "$GITHUB_OUTPUT"
+          done < "$FLAG_FILE"
+
+      - name: Stop job if training is disabled
+        if: steps.read_flag.outputs.train != 'true'
+        run: |
+          echo "Phase 0b AIRL training disabled in flag file — stopping."
+          exit 0
+
+      - name: Clean up previous training artifacts
+        if: steps.read_flag.outputs.train == 'true'
+        run: |
+          sudo systemctl stop swim-irl-phase0b-airl 2>/dev/null || true
+          sleep 3
+          rm -f logs/phase0b_airl_*.log logs/phase0b_airl_*.DONE logs/phase0b_airl_*.FAILED
+          echo "Cleaned up previous Phase 0b AIRL artifacts."
+
+      - name: Install dependencies
+        if: steps.read_flag.outputs.train == 'true'
+        run: |
+          set -e
+          python3 -m venv .venv
+          $VENV/python -m pip install --upgrade pip
+          $VENV/python -m pip install -r requirements.txt
+          $VENV/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          grep -v '^torch' external/NanoGoal-RL/requirements.txt > /tmp/nanogoal-requirements-no-torch.txt
+          $VENV/python -m pip install -r /tmp/nanogoal-requirements-no-torch.txt
+
+      - name: Prepare output directories
+        if: steps.read_flag.outputs.train == 'true'
+        run: |
+          mkdir -p logs experiments/results/checkpoints \
+            logs/phase0b_airl logs/tensorboard/phase0b_airl
+
+      - name: Launch Phase 0b AIRL training via systemd
+        if: steps.read_flag.outputs.train == 'true'
+        run: |
+          set -e
+
+          WORK_DIR="$(pwd)"
+          chmod +x .github/ci/train_phase0b_airl.sh
+
+          printf 'FLAG_FILE=%s\n' "$WORK_DIR/.github/ci/train_phase0b_airl.flag" > /tmp/swim-irl-phase0b-airl.env
+          printf 'SHA=%s\n' "${{ github.sha }}"                                  >> /tmp/swim-irl-phase0b-airl.env
+          printf 'BRANCH=%s\n' "${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}" >> /tmp/swim-irl-phase0b-airl.env
+          printf 'WORK_DIR=%s\n' "$WORK_DIR"                                     >> /tmp/swim-irl-phase0b-airl.env
+          printf 'GITHUB_TOKEN=%s\n' "${{ github.token }}"                       >> /tmp/swim-irl-phase0b-airl.env
+          printf 'GITHUB_REPOSITORY=%s\n' "${{ github.repository }}"             >> /tmp/swim-irl-phase0b-airl.env
+          printf 'GH_TOKEN=%s\n' "${{ github.token }}"                           >> /tmp/swim-irl-phase0b-airl.env
+          printf 'N_ENVS=%s\n' "2"                                               >> /tmp/swim-irl-phase0b-airl.env
+
+          sudo systemctl daemon-reload
+          sudo systemctl start swim-irl-phase0b-airl
+
+          echo "Phase 0b AIRL training launched via systemd service 'swim-irl-phase0b-airl'."
+          echo "Monitor with: sudo journalctl -u swim-irl-phase0b-airl -f"
+          echo "Or:           tail -f $WORK_DIR/logs/phase0b_airl_session.log"
+          echo "TensorBoard:  tensorboard --logdir $WORK_DIR/logs/tensorboard/phase0b_airl"
