@@ -37,8 +37,12 @@ def create_env(nanogoal_path: str):
 SEED_MODE_PROPORTIONS = {
     "easy": {"easy": 1.0},
     "easy_medium": {"easy": 0.5, "medium": 0.5},
-    "mixed": {"easy": 1 / 3, "medium": 1 / 3, "hard": 1 / 3},
 }
+# "mixed" (1/3 easy + 1/3 medium + 1/3 hard) was dropped along with the
+# hard model itself -- see README Limitations for why (hard training did
+# not converge to an optimal policy, so it was excluded from the grid
+# entirely, not just its own row: any seed_mode that included hard seeds
+# no longer has a meaningful role once hard is out of scope).
 
 
 def sample_seed_from_mode(
@@ -126,6 +130,12 @@ def load_test_seeds(nanogoal_path: str) -> dict[str, list[int]]:
     data/simulate_nanogoal.py, so the seeds' internal order doesn't
     matter here.
 
+    Still computes the hard split too, even though Phase 0b's grid no
+    longer uses it -- keeps this function a faithful, complete
+    reproduction of eval.py's actual split regardless of which categories
+    the rest of the project currently draws from, and preserves the exact
+    RNG call order (easy, medium, hard) that the real seed values depend on.
+
     NOTE: eval.py's own _sample_category calls
     (train_easy/medium/hard = _sample_category(_all_seeds[...])) never
     pass an explicit pct, so all three default to pct=0.40 in eval.py's
@@ -158,7 +168,10 @@ def load_test_seeds(nanogoal_path: str) -> dict[str, list[int]]:
 
 
 def load_policy(nanogoal_path: str, model_difficulty: str, env):
-    # model_difficulty: "easy", "medium", or "hard"
+    # model_difficulty: "easy" or "medium" (Phase 0b's grid; "hard" is a
+    # valid model_difficulty for this function itself -- it still exists
+    # and can be loaded -- but the grid no longer includes it, see README
+    # Limitations)
     torch.set_num_threads(1)  # matching eval.py's determinism settings
 
     model_path = Path(nanogoal_path) / "models" / f"ppo_nanogoal_{model_difficulty}"

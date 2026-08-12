@@ -90,15 +90,17 @@ def plot_reward_comparison(
 
 
 def plot_recovery_grid_heatmap(
-    values: np.ndarray,           # shape (3, 3)
-    row_labels: list[str],        # e.g. ["easy", "easy_medium", "mixed"] agent
-    col_labels: list[str],        # e.g. ["easy", "easy_medium", "mixed"] seed_mode
+    values: np.ndarray,           # shape (n_models, n_seed_modes)
+    row_labels: list[str],        # model_difficulty values, e.g. ["easy", "medium"]
+    col_labels: list[str],        # seed_mode values, e.g. ["easy", "easy_medium"]
     metric_name: str,
     output_path: str | None = None,
 ) -> None:
-    """The 3x3 agent-competence x environment-mix grid, as a heatmap.
-    Rows = which trained agent generated the demonstrations, columns =
-    which seed-mode distribution the demonstrations were drawn from.
+    """The agent-competence x environment-mix grid, as a heatmap. Rows =
+    which trained agent generated the demonstrations, columns = which
+    seed-mode distribution the demonstrations were drawn from. Shape is
+    inferred from `values` itself, not hardcoded -- works the same for
+    the current 2x2 grid as it did for the original 3x3.
     """
     fig, ax = plt.subplots(figsize=(6, 5))
     im = ax.imshow(values, cmap="viridis")

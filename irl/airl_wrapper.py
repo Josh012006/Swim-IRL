@@ -118,9 +118,9 @@ def train_airl(
 ) -> tuple[RewardNet, PPO]:
     """Wires our environment/demonstrations into imitation's AIRL
     trainer. The policy (gen_algo) starts from scratch, same reasoning as
-    GCL's train_gcl -- the pretrained easy/medium/hard checkpoints are
-    only used to GENERATE demonstrations, never to warm-start the
-    algorithm being validated.
+    GCL's train_gcl -- the pretrained easy/medium checkpoints are only
+    used to GENERATE demonstrations, never to warm-start the algorithm
+    being validated.
 
     n_training_steps is the OVERALL budget for this seed_mode (see
     experiments/phase0b_gcl_training.py's BUDGET table -- the same table

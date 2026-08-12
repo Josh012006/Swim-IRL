@@ -1,33 +1,37 @@
-"""Phase 0b GCL experiment: the 3x3 grid (agent trained on
-{easy, easy+medium, all three} x demonstrations drawn from
-{easy-only, easy+medium, fully-mixed} seed distributions), training GCL
-on each of the 9 cells and evaluating the recovered reward/policy via
-eval.recovery_continuous.sampled_recovery_gap.
+"""Phase 0b GCL experiment: the 2x2 grid (agent trained on
+{easy, easy+medium} x demonstrations drawn from {easy-only, easy+medium}
+seed distributions), training GCL on each of the 4 cells and evaluating
+the recovered reward/policy via eval.recovery_continuous.sampled_recovery_gap.
+
+"hard" was dropped from both axes (model_difficulty and seed_mode) after
+hard training completed but did not converge to an optimal policy -- see
+README Limitations. The grid went from 3x3 to 2x2, not just from 3x3 to
+"3x3 with a skipped row": seed_mode's "mixed" tier (which included hard
+seeds) was removed entirely, not renamed, since a mix that no longer
+contains its hardest category isn't the same experimental condition.
 
 Usage (local smoke test, minutes not hours):
     python -m experiments.phase0b_gcl_training --seed 0 --quick
 
 Usage (real run, meant for a remote/background machine -- see
-.github/ci/train_phase0b.sh for the unattended version of this):
+.github/ci/train_phase0b_gcl.sh for the unattended version of this):
     python -m experiments.phase0b_gcl_training --seed 0 --cell easy_easy --n-envs 4
 
 BUDGET is calibrated against NanoGoal-RL's OWN reported timesteps to
-reach a working policy at each difficulty (12M / 150M / 400M for
-easy / medium / hard -- see that project's README), scaled x1.5 as a
-starting hypothesis for GCL's harder learning problem (reward AND policy,
-not policy alone). Per seed_mode, not per model_difficulty -- what the
-generator policy inside train_gcl has to learn to solve is set by
-seed_mode's difficulty mix, not by which expert produced the
-demonstrations. THIS IS EXPENSIVE: even with parallelism, expect this to
-take from tens of minutes (easy) to multiple hours (mixed) PER CELL on a
-personal machine -- always pass --checkpoint-dir (done automatically
-below) and run in the background, never interactively for anything but
---quick.
+reach a working policy at each difficulty (12M / 150M for easy / medium
+-- see that project's README), scaled x1.5 as a starting hypothesis for
+GCL's harder learning problem (reward AND policy, not policy alone). Per
+seed_mode, not per model_difficulty -- what the generator policy inside
+train_gcl has to learn to solve is set by seed_mode's difficulty mix, not
+by which expert produced the demonstrations. THIS IS EXPENSIVE: even with
+parallelism, expect this to take from tens of minutes (easy) to a few
+hours (easy_medium) PER CELL on a personal machine -- always pass
+--checkpoint-dir (done automatically below) and run in the background,
+never interactively for anything but --quick.
 
 --cell trains exactly ONE (model_difficulty, seed_mode) pair -- the
-remote pipeline launches 6 separate invocations of this (hard is skipped
-automatically, its model doesn't exist yet), rather than one process
-looping over all 9/6 cells, so a crash in one cell doesn't take the
+remote pipeline launches 4 separate invocations of this, rather than one
+process looping over all 4 cells, so a crash in one cell doesn't take the
 others down with it and each can checkpoint/resume independently.
 """
 import argparse
@@ -45,14 +49,13 @@ from experiments.plotting_phase0b import (
 )
 
 NANOGOAL_PATH = "external/NanoGoal-RL"
-MODEL_DIFFICULTIES = ["easy", "medium", "hard"]
-SEED_MODES = ["easy", "easy_medium", "mixed"]
+MODEL_DIFFICULTIES = ["easy", "medium"]
+SEED_MODES = ["easy", "easy_medium"]
 
 # Real, per-seed_mode budgets -- see module docstring for the calibration.
 BUDGET = {
     "easy":        {"total_timesteps": 18_000_000,  "n_target_successes": 150},
     "easy_medium": {"total_timesteps": 225_000_000, "n_target_successes": 150},
-    "mixed":       {"total_timesteps": 600_000_000, "n_target_successes": 150},
 }
 QUICK_PARAMS = dict(total_timesteps=4096, n_target_successes=5)
 # 4096, not smaller: imitation's AIRL.train() asserts total_timesteps must
@@ -83,7 +86,8 @@ def run_cell(
         n_target_successes=params["n_target_successes"], rng=rng,
     )
 
-    checkpoint_dir = f"experiments/results/checkpoints/gcl_{model_difficulty}_{seed_mode}"
+    cell_name = f"{model_difficulty}_{seed_mode}"
+    checkpoint_dir = f"experiments/results/checkpoints/gcl_{cell_name}"
     reward_net, recovered_policy, history = train_gcl(
         NANOGOAL_PATH, demonstrations, seed_mode,
         total_timesteps=params["total_timesteps"],
@@ -93,6 +97,8 @@ def run_cell(
         seed=seed,
         checkpoint_dir=checkpoint_dir,
         checkpoint_every=1 if quick else CHECKPOINT_EVERY,
+        tb_log_dir="logs/tensorboard/phase0b_gcl",
+        tb_log_name=cell_name,
     )
 
     expert_policy = load_policy(NANOGOAL_PATH, model_difficulty, create_env(NANOGOAL_PATH))
@@ -115,8 +121,8 @@ def main(seed: int, quick: bool, n_envs: int, single_cell: str | None) -> None:
     else:
         cells = [(m, s) for m in MODEL_DIFFICULTIES for s in SEED_MODES]
 
-    return_gap_grid = np.full((3, 3), np.nan)
-    success_gap_grid = np.full((3, 3), np.nan)
+    return_gap_grid = np.full((len(MODEL_DIFFICULTIES), len(SEED_MODES)), np.nan)
+    success_gap_grid = np.full((len(MODEL_DIFFICULTIES), len(SEED_MODES)), np.nan)
 
     for model_difficulty, seed_mode in cells:
         model_path = f"{NANOGOAL_PATH}/models/ppo_nanogoal_{model_difficulty}.zip"
@@ -163,7 +169,7 @@ if __name__ == "__main__":
     parser.add_argument("--n-envs", type=int, default=1)
     parser.add_argument(
         "--cell", type=str, default=None,
-        help="e.g. easy_easy, medium_mixed -- run exactly one cell instead of the full grid",
+        help="e.g. easy_easy, medium_easy_medium -- run exactly one cell instead of the full grid",
     )
     args = parser.parse_args()
     main(args.seed, args.quick, args.n_envs, args.cell)

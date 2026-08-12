@@ -1,11 +1,11 @@
 #!/bin/bash
 # .github/ci/train_phase0b_airl.sh
 # Phase 0b -- AIRL training pipeline.
-# Structure mirrors train_phase0b_gcl.sh exactly; differs only in the
-# Python command invoked (phase0b_airl_training) and the service name
-# (swim-irl-phase0b-airl). Run independently from GCL so a crash in
-# one doesn't take the other down, and both can checkpoint/resume
-# independently.
+# 2x2 grid, same reduction/reasoning as train_phase0b_gcl.sh -- structure
+# mirrors it exactly; differs only in the Python command invoked
+# (phase0b_airl_training) and the service name (swim-irl-phase0b-airl).
+# Run independently from GCL so a crash in one doesn't take the other
+# down, and both can checkpoint/resume independently.
 
 FLAG_FILE="${FLAG_FILE}"
 SHA="${SHA}"
@@ -47,26 +47,16 @@ send_email() {
 
 TRAIN_EASY_EASY=false
 TRAIN_EASY_EASY_MEDIUM=false
-TRAIN_EASY_MIXED=false
 TRAIN_MEDIUM_EASY=false
 TRAIN_MEDIUM_EASY_MEDIUM=false
-TRAIN_MEDIUM_MIXED=false
-TRAIN_HARD_EASY=false
-TRAIN_HARD_EASY_MEDIUM=false
-TRAIN_HARD_MIXED=false
 
 while IFS='=' read -r key value; do
   [ -z "$key" ] && continue
   case "$key" in
     train_easy_easy)          TRAIN_EASY_EASY="$value" ;;
     train_easy_easy_medium)   TRAIN_EASY_EASY_MEDIUM="$value" ;;
-    train_easy_mixed)         TRAIN_EASY_MIXED="$value" ;;
     train_medium_easy)        TRAIN_MEDIUM_EASY="$value" ;;
     train_medium_easy_medium) TRAIN_MEDIUM_EASY_MEDIUM="$value" ;;
-    train_medium_mixed)       TRAIN_MEDIUM_MIXED="$value" ;;
-    train_hard_easy)          TRAIN_HARD_EASY="$value" ;;
-    train_hard_easy_medium)   TRAIN_HARD_EASY_MEDIUM="$value" ;;
-    train_hard_mixed)         TRAIN_HARD_MIXED="$value" ;;
   esac
 done < "$FLAG_FILE"
 
@@ -103,7 +93,7 @@ log_reporter() {
   while true; do
     sleep $interval
     local body="Phase 0b AIRL progress — $(date -u '+%Y-%m-%d %H:%M UTC')\nRun ID: $RUN_ID\n\n"
-    for cell in easy_easy easy_easy_medium easy_mixed medium_easy medium_easy_medium medium_mixed hard_easy hard_easy_medium hard_mixed; do
+    for cell in easy_easy easy_easy_medium medium_easy medium_easy_medium; do
       local logfile="$WORK_DIR/logs/phase0b_airl_${cell}.log"
       if [ -f "$logfile" ]; then
         body+="=== $cell ===\n$(tail -50 "$logfile")\n\n"
@@ -154,26 +144,16 @@ mkdir -p "$WORK_DIR/logs"
 
 [ "$TRAIN_EASY_EASY"          = "true" ] && [ "$TRAINING_FAILED" = "false" ] && run_cell easy easy
 [ "$TRAIN_EASY_EASY_MEDIUM"   = "true" ] && [ "$TRAINING_FAILED" = "false" ] && run_cell easy easy_medium
-[ "$TRAIN_EASY_MIXED"         = "true" ] && [ "$TRAINING_FAILED" = "false" ] && run_cell easy mixed
 [ "$TRAIN_MEDIUM_EASY"        = "true" ] && [ "$TRAINING_FAILED" = "false" ] && run_cell medium easy
 [ "$TRAIN_MEDIUM_EASY_MEDIUM" = "true" ] && [ "$TRAINING_FAILED" = "false" ] && run_cell medium easy_medium
-[ "$TRAIN_MEDIUM_MIXED"       = "true" ] && [ "$TRAINING_FAILED" = "false" ] && run_cell medium mixed
-[ "$TRAIN_HARD_EASY"          = "true" ] && [ "$TRAINING_FAILED" = "false" ] && run_cell hard easy
-[ "$TRAIN_HARD_EASY_MEDIUM"   = "true" ] && [ "$TRAINING_FAILED" = "false" ] && run_cell hard easy_medium
-[ "$TRAIN_HARD_MIXED"         = "true" ] && [ "$TRAINING_FAILED" = "false" ] && run_cell hard mixed
 
 log "Resetting train_phase0b_airl.flag..."
 {
   echo "train=false"
   echo "train_easy_easy=false"
   echo "train_easy_easy_medium=false"
-  echo "train_easy_mixed=false"
   echo "train_medium_easy=false"
   echo "train_medium_easy_medium=false"
-  echo "train_medium_mixed=false"
-  echo "train_hard_easy=false"
-  echo "train_hard_easy_medium=false"
-  echo "train_hard_mixed=false"
 } > "$FLAG_FILE"
 
 log "Committing results..."
@@ -190,7 +170,7 @@ fi
 
 log "Creating GitHub issue..."
 BODY="Phase 0b AIRL training from commit: $SHA"$'\n\n'
-for cell in easy_easy easy_easy_medium easy_mixed medium_easy medium_easy_medium medium_mixed hard_easy hard_easy_medium hard_mixed; do
+for cell in easy_easy easy_easy_medium medium_easy medium_easy_medium; do
   if [ -f "$WORK_DIR/logs/phase0b_airl_${cell}.DONE" ]; then
     BODY+="✅ ${cell} complete"$'\n'
   elif [ -f "$WORK_DIR/logs/phase0b_airl_${cell}.FAILED" ]; then

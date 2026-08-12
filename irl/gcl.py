@@ -17,7 +17,7 @@ for why this can't represent NanoGoal-RL's actual action-dependent
 effort/spinning penalty.
 
 The policy trained here starts from SCRATCH (random init) -- it is NOT
-warm-started from the loaded easy/medium/hard checkpoints. Those are only
+warm-started from the loaded easy/medium checkpoints. Those are only
 used to GENERATE demonstrations (see data/simulate_nanogoal.py); using
 them to also seed GCL's own learner would quietly hand it a policy that
 already solves the task, defeating the point of testing whether GCL can
@@ -247,7 +247,7 @@ def train_gcl(
 
     total_timesteps is the OVERALL policy-training budget for this
     seed_mode (see experiments/phase0b_gcl_training.py's BUDGET table --
-    calibrated against NanoGoal-RL's own reported easy/medium/hard
+    calibrated against NanoGoal-RL's own reported easy/medium
     timesteps-to-convergence, not picked arbitrarily). Divided evenly
     across n_iterations; each chunk runs via one policy.learn() call.
 

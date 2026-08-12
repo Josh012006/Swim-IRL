@@ -1,7 +1,8 @@
-"""Demonstration generation for Phase 0b: build the 3x3 experiment grid
-(agent trained on {easy, easy+medium, all three} x evaluated on
-{easy-only, easy+medium, fully-mixed} seed distributions), using
-sim/nanogoal_adapter.py's rollout mechanics.
+"""Demonstration generation for Phase 0b: build the 2x2 experiment grid
+(agent trained on {easy, easy+medium} x demonstrations drawn from
+{easy-only, easy+medium} seed distributions -- "hard" was dropped from
+both axes, see README Limitations), using sim/nanogoal_adapter.py's
+rollout mechanics.
 
 Only successful episodes (info["is_success"] == True) are kept as
 demonstrations -- a failed rollout reflects a policy failure, not a
@@ -26,8 +27,8 @@ from sim.nanogoal_adapter import (
 
 def generate_nanogoal_demonstrations(
     nanogoal_path: str,
-    model_difficulty: str,  # "easy", "medium", or "hard" -- which trained agent
-    seed_mode: str,         # "easy", "easy_medium", or "mixed" -- which environment distribution
+    model_difficulty: str,  # "easy" or "medium" -- which trained agent
+    seed_mode: str,         # "easy" or "easy_medium" -- which environment distribution
     n_target_successes: int,
     rng: np.random.Generator,
     max_attempts_per_category: int = 2000,
@@ -42,9 +43,10 @@ def generate_nanogoal_demonstrations(
 
     stats: {"attempts": {cat: n}, "successes": {cat: n},
             "success_rate": {cat: float}} -- per-difficulty-category
-    breakdown. This is itself a first-class result of the 3x3 grid: e.g.
-    whether the easy-only agent's success rate really collapses on hard
-    seeds, and by how much, independent of the reward recovery question.
+    breakdown. This is itself a first-class result of the grid: e.g.
+    whether the easy-only agent's success rate really collapses on
+    medium seeds, and by how much, independent of the reward recovery
+    question.
     """
     if seed_mode not in SEED_MODE_PROPORTIONS:
         raise ValueError(
