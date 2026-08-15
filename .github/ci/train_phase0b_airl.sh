@@ -50,7 +50,7 @@ TRAIN_EASY_EASY_MEDIUM=false
 TRAIN_MEDIUM_EASY=false
 TRAIN_MEDIUM_EASY_MEDIUM=false
 
-while IFS='=' read -r key value; do
+while IFS='=' read -r key value || [ -n "$key" ]; do
   [ -z "$key" ] && continue
   case "$key" in
     train_easy_easy)          TRAIN_EASY_EASY="$value" ;;

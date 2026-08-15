@@ -6,3 +6,4 @@ experiments/results/*.npy
 .DS_Store
 Thumbs.db
 .vscode/
+experiments/results/checkpoints/

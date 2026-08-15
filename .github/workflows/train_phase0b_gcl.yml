@@ -12,12 +12,34 @@ jobs:
     env:
       VENV: .venv/bin
     steps:
+      - name: Backup logs and checkpoints before checkout
+        run: |
+          rm -rf /tmp/swim-irl-phase0b-gcl-backup
+          mkdir -p /tmp/swim-irl-phase0b-gcl-backup
+          if [ -d logs ]; then
+            cp -r logs /tmp/swim-irl-phase0b-gcl-backup/logs
+          fi
+          if [ -d experiments/results/checkpoints ]; then
+            cp -r experiments/results/checkpoints /tmp/swim-irl-phase0b-gcl-backup/checkpoints
+          fi
+
       - name: Fetch code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: recursive
           ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
+
+      - name: Restore logs and checkpoints after checkout
+        run: |
+          if [ -d /tmp/swim-irl-phase0b-gcl-backup/logs ]; then
+            mkdir -p logs
+            cp -r /tmp/swim-irl-phase0b-gcl-backup/logs/. logs/
+          fi
+          if [ -d /tmp/swim-irl-phase0b-gcl-backup/checkpoints ]; then
+            mkdir -p experiments/results/checkpoints
+            cp -r /tmp/swim-irl-phase0b-gcl-backup/checkpoints/. experiments/results/checkpoints/
+          fi
       - name: Read train_phase0b_gcl.flag
         id: read_flag
         run: |
