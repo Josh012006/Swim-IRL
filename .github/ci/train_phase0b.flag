@@ -1,0 +1,9 @@
+train=false
+train_gcl_easy_easy=false
+train_gcl_easy_easy_medium=false
+train_gcl_medium_easy=false
+train_gcl_medium_easy_medium=false
+train_airl_easy_easy=false
+train_airl_easy_easy_medium=false
+train_airl_medium_easy=false
+train_airl_medium_easy_medium=false

@@ -1,4 +1,4 @@
-name: Phase 0b — AIRL training
+name: Phase 0b — GCL + AIRL training
 on:
   push:
   pull_request:
@@ -14,13 +14,13 @@ jobs:
     steps:
       - name: Backup logs and checkpoints before checkout
         run: |
-          rm -rf /tmp/swim-irl-phase0b-airl-backup
-          mkdir -p /tmp/swim-irl-phase0b-airl-backup
+          rm -rf /tmp/swim-irl-phase0b-backup
+          mkdir -p /tmp/swim-irl-phase0b-backup
           if [ -d logs ]; then
-            cp -r logs /tmp/swim-irl-phase0b-airl-backup/logs
+            cp -r logs /tmp/swim-irl-phase0b-backup/logs
           fi
           if [ -d experiments/results/checkpoints ]; then
-            cp -r experiments/results/checkpoints /tmp/swim-irl-phase0b-airl-backup/checkpoints
+            cp -r experiments/results/checkpoints /tmp/swim-irl-phase0b-backup/checkpoints
           fi
 
       - name: Fetch code
@@ -32,19 +32,20 @@ jobs:
 
       - name: Restore logs and checkpoints after checkout
         run: |
-          if [ -d /tmp/swim-irl-phase0b-airl-backup/logs ]; then
+          if [ -d /tmp/swim-irl-phase0b-backup/logs ]; then
             mkdir -p logs
-            cp -r /tmp/swim-irl-phase0b-airl-backup/logs/. logs/
+            cp -r /tmp/swim-irl-phase0b-backup/logs/. logs/
           fi
-          if [ -d /tmp/swim-irl-phase0b-airl-backup/checkpoints ]; then
+          if [ -d /tmp/swim-irl-phase0b-backup/checkpoints ]; then
             mkdir -p experiments/results/checkpoints
-            cp -r /tmp/swim-irl-phase0b-airl-backup/checkpoints/. experiments/results/checkpoints/
+            cp -r /tmp/swim-irl-phase0b-backup/checkpoints/. experiments/results/checkpoints/
           fi
-      - name: Read train_phase0b_airl.flag
+
+      - name: Read train_phase0b.flag
         id: read_flag
         run: |
           set -e
-          FLAG_FILE=".github/ci/train_phase0b_airl.flag"
+          FLAG_FILE=".github/ci/train_phase0b.flag"
           if [ ! -f "$FLAG_FILE" ]; then
             echo "train=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -55,18 +56,22 @@ jobs:
               train) echo "train=$value" >> "$GITHUB_OUTPUT" ;;
             esac
           done < "$FLAG_FILE"
+
       - name: Stop job if training is disabled
         if: steps.read_flag.outputs.train != 'true'
         run: |
-          echo "Phase 0b AIRL training disabled in flag file — stopping."
+          echo "Phase 0b training disabled in flag file — stopping."
           exit 0
+
       - name: Clean up previous training artifacts
         if: steps.read_flag.outputs.train == 'true'
         run: |
-          sudo systemctl stop swim-irl-phase0b-airl 2>/dev/null || true
+          sudo systemctl stop swim-irl-phase0b 2>/dev/null || true
           sleep 3
+          rm -f logs/phase0b_gcl_*.log logs/phase0b_gcl_*.DONE logs/phase0b_gcl_*.FAILED
           rm -f logs/phase0b_airl_*.log logs/phase0b_airl_*.DONE logs/phase0b_airl_*.FAILED
-          echo "Cleaned up previous Phase 0b AIRL artifacts."
+          echo "Cleaned up previous Phase 0b artifacts."
+
       - name: Install dependencies
         if: steps.read_flag.outputs.train == 'true'
         run: |
@@ -77,28 +82,30 @@ jobs:
           $VENV/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
           grep -v '^torch' external/NanoGoal-RL/requirements.txt > /tmp/nanogoal-requirements-no-torch.txt
           $VENV/python -m pip install -r /tmp/nanogoal-requirements-no-torch.txt
+
       - name: Prepare output directories
         if: steps.read_flag.outputs.train == 'true'
         run: |
           mkdir -p logs experiments/results/checkpoints \
-            logs/phase0b_airl logs/tensorboard/phase0b_airl
-      - name: Launch Phase 0b AIRL training via systemd
+            logs/tensorboard/phase0b_gcl logs/tensorboard/phase0b_airl
+
+      - name: Launch Phase 0b training via systemd
         if: steps.read_flag.outputs.train == 'true'
         run: |
           set -e
           WORK_DIR="$(pwd)"
-          chmod +x .github/ci/train_phase0b_airl.sh
-          printf 'FLAG_FILE=%s\n' "$WORK_DIR/.github/ci/train_phase0b_airl.flag" > /tmp/swim-irl-phase0b-airl.env
-          printf 'SHA=%s\n' "${{ github.sha }}"                                  >> /tmp/swim-irl-phase0b-airl.env
-          printf 'BRANCH=%s\n' "${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}" >> /tmp/swim-irl-phase0b-airl.env
-          printf 'WORK_DIR=%s\n' "$WORK_DIR"                                     >> /tmp/swim-irl-phase0b-airl.env
-          printf 'GITHUB_TOKEN=%s\n' "${{ github.token }}"                       >> /tmp/swim-irl-phase0b-airl.env
-          printf 'GITHUB_REPOSITORY=%s\n' "${{ github.repository }}"             >> /tmp/swim-irl-phase0b-airl.env
-          printf 'GH_TOKEN=%s\n' "${{ github.token }}"                           >> /tmp/swim-irl-phase0b-airl.env
-          printf 'N_ENVS=%s\n' "2"                                               >> /tmp/swim-irl-phase0b-airl.env
+          chmod +x .github/ci/train_phase0b.sh
+          printf 'FLAG_FILE=%s\n' "$WORK_DIR/.github/ci/train_phase0b.flag" > /tmp/swim-irl-phase0b.env
+          printf 'SHA=%s\n' "${{ github.sha }}"                              >> /tmp/swim-irl-phase0b.env
+          printf 'BRANCH=%s\n' "${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}" >> /tmp/swim-irl-phase0b.env
+          printf 'WORK_DIR=%s\n' "$WORK_DIR"                                 >> /tmp/swim-irl-phase0b.env
+          printf 'GITHUB_TOKEN=%s\n' "${{ github.token }}"                   >> /tmp/swim-irl-phase0b.env
+          printf 'GITHUB_REPOSITORY=%s\n' "${{ github.repository }}"         >> /tmp/swim-irl-phase0b.env
+          printf 'GH_TOKEN=%s\n' "${{ github.token }}"                       >> /tmp/swim-irl-phase0b.env
+          printf 'N_ENVS=%s\n' "2"                                           >> /tmp/swim-irl-phase0b.env
           sudo systemctl daemon-reload
-          sudo systemctl start swim-irl-phase0b-airl
-          echo "Phase 0b AIRL training launched via systemd service 'swim-irl-phase0b-airl'."
-          echo "Monitor with: sudo journalctl -u swim-irl-phase0b-airl -f"
-          echo "Or:           tail -f $WORK_DIR/logs/phase0b_airl_session.log"
-          echo "TensorBoard:  tensorboard --logdir $WORK_DIR/logs/tensorboard/phase0b_airl"
+          sudo systemctl start swim-irl-phase0b
+          echo "Phase 0b training launched via systemd service 'swim-irl-phase0b'."
+          echo "Monitor with: sudo journalctl -u swim-irl-phase0b -f"
+          echo "Or:           tail -f $WORK_DIR/logs/phase0b_session.log"
+          echo "TensorBoard:  tensorboard --logdir $WORK_DIR/logs/tensorboard"
