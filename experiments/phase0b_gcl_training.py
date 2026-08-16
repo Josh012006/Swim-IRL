@@ -17,17 +17,22 @@ Usage (real run, meant for a remote/background machine -- see
 .github/ci/train_phase0b_gcl.sh for the unattended version of this):
     python -m experiments.phase0b_gcl_training --seed 0 --cell easy_easy --n-envs 4
 
-BUDGET is calibrated against NanoGoal-RL's OWN reported timesteps to
-reach a working policy at each difficulty (12M / 150M for easy / medium
--- see that project's README), scaled x1.5 as a starting hypothesis for
-GCL's harder learning problem (reward AND policy, not policy alone). Per
-seed_mode, not per model_difficulty -- what the generator policy inside
-train_gcl has to learn to solve is set by seed_mode's difficulty mix, not
-by which expert produced the demonstrations. THIS IS EXPENSIVE: even with
-parallelism, expect this to take from tens of minutes (easy) to a few
-hours (easy_medium) PER CELL on a personal machine -- always pass
---checkpoint-dir (done automatically below) and run in the background,
-never interactively for anything but --quick.
+BUDGET is originally calibrated against NanoGoal-RL's OWN reported
+timesteps to reach a working policy at each difficulty (12M / 150M for
+easy / medium -- see that project's README), scaled x1.5 as a starting
+hypothesis for GCL's harder learning problem (reward AND policy, not
+policy alone). Per seed_mode, not per model_difficulty -- what the
+generator policy inside train_gcl has to learn to solve is set by
+seed_mode's difficulty mix, not by which expert produced the
+demonstrations. "easy" was later revised to 180M/1000 iterations (10x
+the original 18M/100) after a real run showed a late-training collapse
+in the recovered reward alongside a still-climbing success rate -- see
+BUDGET's own comment for the full diagnosis. THIS IS EXPENSIVE: even
+with parallelism, expect this to take from hours (easy, at the revised
+budget) to a few hours (easy_medium, still at the original budget) PER
+CELL on a personal machine -- always pass --checkpoint-dir (done
+automatically below) and run in the background, never interactively for
+anything but --quick.
 
 --cell trains exactly ONE (model_difficulty, seed_mode) pair -- the
 remote pipeline launches 4 separate invocations of this, rather than one
@@ -38,6 +43,7 @@ import argparse
 import os
 
 import numpy as np
+import torch
 
 from data.simulate_nanogoal import generate_nanogoal_demonstrations
 from sim.nanogoal_adapter import create_env, load_policy
@@ -52,12 +58,26 @@ NANOGOAL_PATH = "external/NanoGoal-RL"
 MODEL_DIFFICULTIES = ["easy", "medium"]
 SEED_MODES = ["easy", "easy_medium"]
 
-# Real, per-seed_mode budgets -- see module docstring for the calibration.
+# Real, per-seed_mode budgets -- see module docstring for the original
+# calibration. n_iterations now lives HERE, per seed_mode, rather than as
+# a single global constant -- "easy" was scaled up from 100 to 1000
+# iterations (180M timesteps, 10x, keeping the SAME 180K-timesteps-per-
+# iteration ratio as before -- not just 10x more iterations on the old,
+# smaller total_timesteps, which would instead make reward_net update
+# 10x MORE often per unit of policy training, the opposite of what's
+# needed here) after a real run on easy/easy showed a late-training
+# collapse: rollout/ep_rew_mean (the RECOVERED reward, from reward_net)
+# fell sharply in the final ~15% of iterations while rollout/success_rate
+# (genuine task performance) kept climbing over that same window, and
+# train/value_loss spiked in lockstep -- PPO's value function tracking a
+# reward_net that had not yet stabilized. Only "easy" is scaled here;
+# "easy_medium" keeps its original budget, not touched by this specific
+# diagnosis until it's been checked separately.
 BUDGET = {
-    "easy":        {"total_timesteps": 18_000_000,  "n_target_successes": 150},
-    "easy_medium": {"total_timesteps": 225_000_000, "n_target_successes": 150},
+    "easy":        {"total_timesteps": 180_000_000, "n_iterations": 1000, "n_target_successes": 150},
+    "easy_medium": {"total_timesteps": 225_000_000,  "n_iterations": 100,  "n_target_successes": 150},
 }
-QUICK_PARAMS = dict(total_timesteps=4096, n_target_successes=5)
+QUICK_PARAMS = dict(total_timesteps=4096, n_iterations=4, n_target_successes=5)
 # 4096, not smaller: imitation's AIRL.train() asserts total_timesteps must
 # be >= gen_algo's own n_steps (2048 by default) -- see
 # irl/airl_wrapper.py's docstring. This constant is shared by both
@@ -65,7 +85,19 @@ QUICK_PARAMS = dict(total_timesteps=4096, n_target_successes=5)
 # so it has to satisfy AIRL's harder constraint even though GCL itself
 # would tolerate a smaller value.
 
-N_ITERATIONS = 100          # GCL alternation steps, same across all seed_modes
+# Lowered from 1e-3 (irl.gcl.train_gcl's own default) after the same
+# easy/easy run's diagnosis above: 1e-3 let reward_net's parameters move
+# far enough per single gradient step that PPO's value function -- which
+# tracks the reward AS IT WAS INSTEAD of as it currently is -- couldn't
+# keep up, especially once policy performance started actually improving
+# late in training (the exact window value_loss spiked in). A smaller
+# reward-side learning rate slows how fast the target itself moves per
+# iteration, independent of how many iterations or how much policy
+# training time is given -- a different lever from total_timesteps/
+# n_iterations, addressing a different failure mode (see README
+# Limitations for the full reasoning, both hypotheses considered).
+REWARD_LEARNING_RATE = 1e-4
+
 N_BACKGROUND_PER_ITER = 20
 N_EVAL_SEEDS = 30
 CHECKPOINT_EVERY = 10        # GCL iterations, not timesteps -- see irl/gcl.py
@@ -91,7 +123,8 @@ def run_cell(
     reward_net, recovered_policy, history = train_gcl(
         NANOGOAL_PATH, demonstrations, seed_mode,
         total_timesteps=params["total_timesteps"],
-        n_iterations=2 if quick else N_ITERATIONS,
+        n_iterations=params["n_iterations"],
+        reward_learning_rate=REWARD_LEARNING_RATE,
         n_background_trajectories_per_iteration=3 if quick else N_BACKGROUND_PER_ITER,
         n_envs=n_envs,
         seed=seed,
@@ -100,6 +133,17 @@ def run_cell(
         tb_log_dir="logs/tensorboard/phase0b_gcl",
         tb_log_name=cell_name,
     )
+
+    # Final artifacts, separate from experiments/results/checkpoints/'s
+    # numbered per-iteration snapshots (those are for resumption/
+    # diagnostics during a run -- see irl/gcl.py). models/ is the
+    # single, discoverable place for "the trained result of this cell",
+    # mirroring NanoGoal-RL's own top-level models/ convention. Load
+    # reward_net back with irl.gcl.RewardNetwork() + load_state_dict(),
+    # or query it directly via experiments/query_reward_model.py.
+    os.makedirs("models", exist_ok=True)
+    torch.save(reward_net.state_dict(), f"models/phase0b_gcl_{cell_name}_reward_net.pt")
+    recovered_policy.save(f"models/phase0b_gcl_{cell_name}_policy")
 
     expert_policy = load_policy(NANOGOAL_PATH, model_difficulty, create_env(NANOGOAL_PATH))
     eval_env = create_env(NANOGOAL_PATH)

@@ -198,11 +198,20 @@ def reward_loss(
 
 def _save_checkpoint(checkpoint_dir: str, reward_net, optimizer, policy, iteration,
                       loss_history, success_rate_history):
+    # Numbered per iteration (reward_net_iter{N}.pt, ...), NOT overwritten
+    # in place -- the previous version overwrote the same fixed filenames
+    # every time, which meant a run's full checkpoint history was gone
+    # the moment it ended, with only the final snapshot ever available.
+    # That made it impossible to check, after the fact, how much
+    # reward_net actually moved between iterations -- exactly the
+    # diagnostic needed when policy performance and recovered-reward
+    # value diverge near the end of a run (see README Limitations).
     os.makedirs(checkpoint_dir, exist_ok=True)
-    torch.save(reward_net.state_dict(), os.path.join(checkpoint_dir, "reward_net.pt"))
-    torch.save(optimizer.state_dict(), os.path.join(checkpoint_dir, "optimizer.pt"))
-    policy.save(os.path.join(checkpoint_dir, "policy"))
-    with open(os.path.join(checkpoint_dir, "state.json"), "w") as f:
+    suffix = f"iter{iteration}"
+    torch.save(reward_net.state_dict(), os.path.join(checkpoint_dir, f"reward_net_{suffix}.pt"))
+    torch.save(optimizer.state_dict(), os.path.join(checkpoint_dir, f"optimizer_{suffix}.pt"))
+    policy.save(os.path.join(checkpoint_dir, f"policy_{suffix}"))
+    with open(os.path.join(checkpoint_dir, f"state_{suffix}.json"), "w") as f:
         json.dump({
             "iteration": iteration,
             "loss_history": loss_history,
@@ -211,10 +220,31 @@ def _save_checkpoint(checkpoint_dir: str, reward_net, optimizer, policy, iterati
     print(f"[checkpoint] saved at iteration {iteration} -> {checkpoint_dir}")
 
 
-def _load_checkpoint(checkpoint_dir: str, reward_net, optimizer):
-    reward_net.load_state_dict(torch.load(os.path.join(checkpoint_dir, "reward_net.pt")))
-    optimizer.load_state_dict(torch.load(os.path.join(checkpoint_dir, "optimizer.pt")))
-    with open(os.path.join(checkpoint_dir, "state.json")) as f:
+def _find_latest_checkpoint_iteration(checkpoint_dir: str) -> int | None:
+    """Scans checkpoint_dir for state_iter*.json files and returns the
+    highest iteration number found, or None if there are none (e.g. a
+    fresh checkpoint_dir, or one written by the old overwrite-in-place
+    format -- that older format is NOT auto-detected here, so a
+    checkpoint_dir carried over from before this change starts a fresh
+    run rather than silently resuming from a differently-shaped state).
+    """
+    if not os.path.isdir(checkpoint_dir):
+        return None
+    iterations = []
+    for name in os.listdir(checkpoint_dir):
+        if name.startswith("state_iter") and name.endswith(".json"):
+            try:
+                iterations.append(int(name[len("state_iter"):-len(".json")]))
+            except ValueError:
+                continue
+    return max(iterations) if iterations else None
+
+
+def _load_checkpoint(checkpoint_dir: str, reward_net, optimizer, iteration: int):
+    suffix = f"iter{iteration}"
+    reward_net.load_state_dict(torch.load(os.path.join(checkpoint_dir, f"reward_net_{suffix}.pt")))
+    optimizer.load_state_dict(torch.load(os.path.join(checkpoint_dir, f"optimizer_{suffix}.pt")))
+    with open(os.path.join(checkpoint_dir, f"state_{suffix}.json")) as f:
         state = json.load(f)
     return state["iteration"], state["loss_history"], state["success_rate_history"]
 
@@ -294,13 +324,15 @@ def train_gcl(
     loss_history = []
     success_rate_history = []
 
-    resuming = bool(checkpoint_dir) and os.path.exists(
-        os.path.join(checkpoint_dir, "state.json")  # type: ignore[arg-type]
+    latest_checkpoint_iteration = (
+        _find_latest_checkpoint_iteration(checkpoint_dir) if checkpoint_dir else None
     )
+    resuming = latest_checkpoint_iteration is not None
     if resuming:
-        assert checkpoint_dir is not None  # narrowing: bool(checkpoint_dir) guarantees str
+        assert checkpoint_dir is not None  # narrowing: latest_checkpoint_iteration is
+                                            # only non-None when checkpoint_dir was given
         start_iteration, loss_history, success_rate_history = _load_checkpoint(
-            checkpoint_dir, reward_net, optimizer
+            checkpoint_dir, reward_net, optimizer, latest_checkpoint_iteration
         )
         print(f"[checkpoint] resuming from iteration {start_iteration}/{n_iterations}")
 
@@ -330,8 +362,8 @@ def train_gcl(
     if resuming:
         assert checkpoint_dir is not None  # narrowing: same guard as above
         policy = PPO.load(
-            os.path.join(checkpoint_dir, "policy"), env=vec_env, device="cpu",
-            tensorboard_log=tb_log_dir,
+            os.path.join(checkpoint_dir, f"policy_iter{latest_checkpoint_iteration}"),
+            env=vec_env, device="cpu", tensorboard_log=tb_log_dir,
         )
     else:
         policy = PPO(

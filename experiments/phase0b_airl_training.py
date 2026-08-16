@@ -19,6 +19,7 @@ import argparse
 import os
 
 import numpy as np
+import torch
 
 from data.simulate_nanogoal import generate_nanogoal_demonstrations
 from sim.nanogoal_adapter import create_env, load_policy
@@ -61,6 +62,17 @@ def run_cell(
         tb_log_dir="logs/tensorboard/phase0b_airl",
         tb_log_name=cell_name,
     )
+
+    # Final artifacts -- same models/ convention as
+    # phase0b_gcl_training.py's run_cell, see its comment for why this is
+    # separate from experiments/results/checkpoints/. reward_net here is
+    # imitation's BasicShapedRewardNet, not our own RewardNetwork class --
+    # reconstruct with the same observation_space/action_space/
+    # use_action=False it was built with (see irl/airl_wrapper.py) before
+    # calling load_state_dict() on it.
+    os.makedirs("models", exist_ok=True)
+    torch.save(reward_net.state_dict(), f"models/phase0b_airl_{cell_name}_reward_net.pt")
+    recovered_policy.save(f"models/phase0b_airl_{cell_name}_policy")
 
     expert_policy = load_policy(NANOGOAL_PATH, model_difficulty, create_env(NANOGOAL_PATH))
     expert_eval_env = create_env(NANOGOAL_PATH)
