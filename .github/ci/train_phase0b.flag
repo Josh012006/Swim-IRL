@@ -1,5 +1,5 @@
-train=false
-train_gcl_easy_easy=false
+train=true
+train_gcl_easy_easy=true
 train_gcl_easy_easy_medium=false
 train_gcl_medium_easy=false
 train_gcl_medium_easy_medium=false
