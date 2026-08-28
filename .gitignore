@@ -10,3 +10,4 @@ Thumbs.db
 experiments/results/checkpoints/
 *.DONE
 *.FAILED
+*.log
