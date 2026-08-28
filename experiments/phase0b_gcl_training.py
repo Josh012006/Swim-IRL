@@ -41,6 +41,7 @@ others down with it and each can checkpoint/resume independently.
 """
 import argparse
 import os
+import shutil
 
 import numpy as np
 import torch
@@ -124,6 +125,7 @@ def run_cell(
     quick: bool,
     n_envs: int,
     seed: int,
+    fresh: bool = False,
 ) -> dict:
     params = QUICK_PARAMS if quick else BUDGET[seed_mode]
     rng = np.random.default_rng(seed)
@@ -135,6 +137,26 @@ def run_cell(
 
     cell_name = f"{model_difficulty}_{seed_mode}"
     checkpoint_dir = f"experiments/results/checkpoints/gcl_{cell_name}"
+
+    # train_gcl auto-resumes from checkpoint_dir whenever a numbered
+    # checkpoint is found there (see irl/gcl.py) -- deliberately, so an
+    # interrupted multi-day run can continue after a crash. But
+    # checkpoint_dir also SURVIVES every workflow checkout by design
+    # (backed up/restored around actions/checkout's git clean -- see
+    # .github/workflows/train_phase0b.yml), so it's ALSO still there the
+    # next time this cell is triggered with genuinely different
+    # settings (a new reward_learning_rate, a new
+    # importance_weight_clip_percentile, etc.) -- silently resuming a
+    # run that isn't the one being started, including its
+    # policy.num_timesteps, which is what TensorBoard's step axis
+    # actually is (PPO.load restores it, and policy.learn(...,
+    # reset_num_timesteps=False) continues from there). fresh=True
+    # clears checkpoint_dir first, an explicit "no, really start over"
+    # signal instead of relying on implicit file-presence detection.
+    if fresh and os.path.isdir(checkpoint_dir):
+        shutil.rmtree(checkpoint_dir)
+        print(f"--fresh: cleared {checkpoint_dir} before starting")
+
     reward_net, recovered_policy, history = train_gcl(
         NANOGOAL_PATH, demonstrations, seed_mode,
         total_timesteps=params["total_timesteps"],
@@ -172,7 +194,7 @@ def run_cell(
     return {"demo_stats": demo_stats, "history": history, "reward_net": reward_net, "gap": gap}
 
 
-def main(seed: int, quick: bool, n_envs: int, single_cell: str | None) -> None:
+def main(seed: int, quick: bool, n_envs: int, single_cell: str | None, fresh: bool) -> None:
     os.makedirs("experiments/results", exist_ok=True)
 
     if single_cell is not None:
@@ -192,7 +214,7 @@ def main(seed: int, quick: bool, n_envs: int, single_cell: str | None) -> None:
 
         cell_name = f"{model_difficulty}_{seed_mode}"
         print(f"=== cell {cell_name} ===")
-        result = run_cell(model_difficulty, seed_mode, quick, n_envs, seed)
+        result = run_cell(model_difficulty, seed_mode, quick, n_envs, seed, fresh=fresh)
 
         i = MODEL_DIFFICULTIES.index(model_difficulty)
         j = SEED_MODES.index(seed_mode)
@@ -231,5 +253,11 @@ if __name__ == "__main__":
         "--cell", type=str, default=None,
         help="e.g. easy_easy, medium_easy_medium -- run exactly one cell instead of the full grid",
     )
+    parser.add_argument(
+        "--fresh", action="store_true",
+        help="clear any existing checkpoint for the cell(s) being run before "
+             "starting, instead of auto-resuming from it -- use this whenever "
+             "hyperparameters changed since the last run of this cell",
+    )
     args = parser.parse_args()
-    main(args.seed, args.quick, args.n_envs, args.cell)
+    main(args.seed, args.quick, args.n_envs, args.cell, args.fresh)
