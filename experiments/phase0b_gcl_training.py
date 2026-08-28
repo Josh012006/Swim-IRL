@@ -98,6 +98,21 @@ QUICK_PARAMS = dict(total_timesteps=4096, n_iterations=4, n_target_successes=5)
 # Limitations for the full reasoning, both hypotheses considered).
 REWARD_LEARNING_RATE = 1e-4
 
+# Log-ratio clipping for compute_importance_weights, added after moving
+# to per-decision (per-transition) pooling was found to be only a
+# PARTIAL fix on its own: Effective Sample Size (see
+# experiments/diagnose_importance_weights.py) improved from ~1 (per-
+# trajectory weighting) to only ~3-35 out of thousands of pooled
+# transitions -- still heavily concentrated. Clipping log-ratios above
+# this percentile of each iteration's own batch, before the softmax,
+# raised ESS to ~46% of the pool at 95.0 on a real check -- see
+# irl/gcl.py's compute_importance_weights docstring for the full
+# citation trail (Ionides 2008, directly analogous to PPO's own
+# clip_range). Not yet validated across a full real training run, just
+# a single-batch measurement -- worth rechecking with
+# diagnose_importance_weights.py partway through the next run.
+IMPORTANCE_WEIGHT_CLIP_PERCENTILE = 95.0
+
 N_BACKGROUND_PER_ITER = 20
 N_EVAL_SEEDS = 30
 CHECKPOINT_EVERY = 10        # GCL iterations, not timesteps -- see irl/gcl.py
@@ -125,6 +140,7 @@ def run_cell(
         total_timesteps=params["total_timesteps"],
         n_iterations=params["n_iterations"],
         reward_learning_rate=REWARD_LEARNING_RATE,
+        importance_weight_clip_percentile=IMPORTANCE_WEIGHT_CLIP_PERCENTILE,
         n_background_trajectories_per_iteration=3 if quick else N_BACKGROUND_PER_ITER,
         n_envs=n_envs,
         seed=seed,
