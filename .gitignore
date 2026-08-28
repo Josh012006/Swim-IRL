@@ -8,3 +8,5 @@ experiments/results/*.npy
 Thumbs.db
 .vscode/
 experiments/results/checkpoints/
+*.DONE
+*.FAILED
