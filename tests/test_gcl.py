@@ -38,16 +38,25 @@ def test_compute_importance_weights_sums_to_one():
     class FakePolicy:
         policy = FakeInnerPolicy()
 
+    trajectory_lengths = [10, 15, 8]
     trajectories = [
         {
             "observations": np.random.randn(T + 1, 15).astype(np.float32),
             "actions": np.random.randn(T, 2).astype(np.float32),
         }
-        for T in [10, 15, 8]
+        for T in trajectory_lengths
     ]
 
     weights = compute_importance_weights(net, trajectories, FakePolicy())
-    assert weights.shape == (3,)
+    # Per-decision (per-transition) pooling: one weight per (trajectory,
+    # timestep) pair across ALL trajectories, not one weight per whole
+    # trajectory -- shape is the SUM of each trajectory's T (states
+    # 0..T-1, where an action/log-prob exists), not len(trajectories).
+    # Regression test for exactly the drift this caught: these
+    # assertions were written for an earlier per-trajectory API and
+    # went stale silently until CI's real test run caught the mismatch.
+    expected_total_transitions = sum(trajectory_lengths)
+    assert weights.shape == (expected_total_transitions,)
     assert weights.min() >= 0.0
     assert np.isclose(weights.sum(), 1.0)
 
@@ -62,7 +71,14 @@ def test_reward_loss_produces_a_real_gradient():
         {"observations": np.random.randn(9, 15).astype(np.float32)}
         for _ in range(3)
     ]
-    weights = np.array([0.2, 0.5, 0.3])
+    # importance_weights must match reward_loss's own pooling: states
+    # 0..T-1 of each background trajectory (T-1 = 8 per trajectory here,
+    # since observations has shape (9, 15)), concatenated across all 3
+    # trajectories -- 24 total, one weight per pooled state, not one
+    # weight per whole trajectory (see test_compute_importance_weights_
+    # sums_to_one's comment for the same per-decision pooling change).
+    total_pooled_states = sum(len(traj["observations"]) - 1 for traj in background)
+    weights = np.random.dirichlet(np.ones(total_pooled_states)).astype(np.float32)
 
     loss = reward_loss(net, demos, background, weights)
     assert loss.requires_grad
