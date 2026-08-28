@@ -64,25 +64,41 @@ send_email() {
 
 # ── Read flags ────────────────────────────────────────────────────────────────
 TRAIN_GCL_EASY_EASY=false
+FRESH_GCL_EASY_EASY=false
 TRAIN_GCL_EASY_EASY_MEDIUM=false
+FRESH_GCL_EASY_EASY_MEDIUM=false
 TRAIN_GCL_MEDIUM_EASY=false
+FRESH_GCL_MEDIUM_EASY=false
 TRAIN_GCL_MEDIUM_EASY_MEDIUM=false
+FRESH_GCL_MEDIUM_EASY_MEDIUM=false
 TRAIN_AIRL_EASY_EASY=false
+FRESH_AIRL_EASY_EASY=false
 TRAIN_AIRL_EASY_EASY_MEDIUM=false
+FRESH_AIRL_EASY_EASY_MEDIUM=false
 TRAIN_AIRL_MEDIUM_EASY=false
+FRESH_AIRL_MEDIUM_EASY=false
 TRAIN_AIRL_MEDIUM_EASY_MEDIUM=false
+FRESH_AIRL_MEDIUM_EASY_MEDIUM=false
 
 while IFS='=' read -r key value || [ -n "$key" ]; do
   [ -z "$key" ] && continue
   case "$key" in
     train_gcl_easy_easy)           TRAIN_GCL_EASY_EASY="$value" ;;
+    fresh_gcl_easy_easy)           FRESH_GCL_EASY_EASY="$value" ;;
     train_gcl_easy_easy_medium)    TRAIN_GCL_EASY_EASY_MEDIUM="$value" ;;
+    fresh_gcl_easy_easy_medium)    FRESH_GCL_EASY_EASY_MEDIUM="$value" ;;
     train_gcl_medium_easy)         TRAIN_GCL_MEDIUM_EASY="$value" ;;
+    fresh_gcl_medium_easy)         FRESH_GCL_MEDIUM_EASY="$value" ;;
     train_gcl_medium_easy_medium)  TRAIN_GCL_MEDIUM_EASY_MEDIUM="$value" ;;
+    fresh_gcl_medium_easy_medium)  FRESH_GCL_MEDIUM_EASY_MEDIUM="$value" ;;
     train_airl_easy_easy)          TRAIN_AIRL_EASY_EASY="$value" ;;
+    fresh_airl_easy_easy)          FRESH_AIRL_EASY_EASY="$value" ;;
     train_airl_easy_easy_medium)   TRAIN_AIRL_EASY_EASY_MEDIUM="$value" ;;
+    fresh_airl_easy_easy_medium)   FRESH_AIRL_EASY_EASY_MEDIUM="$value" ;;
     train_airl_medium_easy)        TRAIN_AIRL_MEDIUM_EASY="$value" ;;
+    fresh_airl_medium_easy)        FRESH_AIRL_MEDIUM_EASY="$value" ;;
     train_airl_medium_easy_medium) TRAIN_AIRL_MEDIUM_EASY_MEDIUM="$value" ;;
+    fresh_airl_medium_easy_medium) FRESH_AIRL_MEDIUM_EASY_MEDIUM="$value" ;;
   esac
 done < "$FLAG_FILE"
 
@@ -155,16 +171,26 @@ run_cell() {
   local algo="$1"     # "gcl" or "airl"
   local model="$2"
   local seed_mode="$3"
+  local fresh="$4"    # "true" or "false" -- see irl/gcl.py's / irl/airl_wrapper.py's
+                       # checkpoint_dir auto-resume: checkpoint_dir survives every
+                       # checkout by design (see the two backup/restore steps
+                       # above), so without an explicit --fresh, a cell whose
+                       # hyperparameters changed since its last run would
+                       # silently resume the OLD run instead of starting the
+                       # new one -- including its TensorBoard step count.
   local cell="${model}_${seed_mode}"
   local logfile="$WORK_DIR/logs/phase0b_${algo}_${cell}.log"
   local module="experiments.phase0b_${algo}_training"
 
-  log "Starting $algo cell $cell..."
+  local fresh_arg=""
+  [ "$fresh" = "true" ] && fresh_arg="--fresh"
+
+  log "Starting $algo cell $cell... (fresh=$fresh)"
   send_email "🟢 Swim-IRL $algo — ${cell} started" \
-    "$algo cell ${cell} started.\nRun ID: $RUN_ID\nCommit: $SHA"
+    "$algo cell ${cell} started.\nRun ID: $RUN_ID\nCommit: $SHA\nFresh: $fresh"
 
   RUN_ID="$RUN_ID" "$VENV/python" -u -m "$module" \
-      --seed 0 --n-envs "$N_ENVS" --cell "${model}_${seed_mode}" \
+      --seed 0 --n-envs "$N_ENVS" --cell "${model}_${seed_mode}" $fresh_arg \
       > "$logfile" 2>&1
   local exit_code=$?
 
@@ -192,27 +218,35 @@ run_cell() {
 # ── Run all requested cells: GCL first, then AIRL ─────────────────────────────
 mkdir -p "$WORK_DIR/logs"
 
-[ "$TRAIN_GCL_EASY_EASY"           = "true" ] && [ "$TRAINING_FAILED" = "false" ] && run_cell gcl easy easy
-[ "$TRAIN_GCL_EASY_EASY_MEDIUM"    = "true" ] && [ "$TRAINING_FAILED" = "false" ] && run_cell gcl easy easy_medium
-[ "$TRAIN_GCL_MEDIUM_EASY"         = "true" ] && [ "$TRAINING_FAILED" = "false" ] && run_cell gcl medium easy
-[ "$TRAIN_GCL_MEDIUM_EASY_MEDIUM"  = "true" ] && [ "$TRAINING_FAILED" = "false" ] && run_cell gcl medium easy_medium
-[ "$TRAIN_AIRL_EASY_EASY"          = "true" ] && [ "$TRAINING_FAILED" = "false" ] && run_cell airl easy easy
-[ "$TRAIN_AIRL_EASY_EASY_MEDIUM"   = "true" ] && [ "$TRAINING_FAILED" = "false" ] && run_cell airl easy easy_medium
-[ "$TRAIN_AIRL_MEDIUM_EASY"        = "true" ] && [ "$TRAINING_FAILED" = "false" ] && run_cell airl medium easy
-[ "$TRAIN_AIRL_MEDIUM_EASY_MEDIUM" = "true" ] && [ "$TRAINING_FAILED" = "false" ] && run_cell airl medium easy_medium
+[ "$TRAIN_GCL_EASY_EASY"           = "true" ] && [ "$TRAINING_FAILED" = "false" ] && run_cell gcl easy easy "$FRESH_GCL_EASY_EASY"
+[ "$TRAIN_GCL_EASY_EASY_MEDIUM"    = "true" ] && [ "$TRAINING_FAILED" = "false" ] && run_cell gcl easy easy_medium "$FRESH_GCL_EASY_EASY_MEDIUM"
+[ "$TRAIN_GCL_MEDIUM_EASY"         = "true" ] && [ "$TRAINING_FAILED" = "false" ] && run_cell gcl medium easy "$FRESH_GCL_MEDIUM_EASY"
+[ "$TRAIN_GCL_MEDIUM_EASY_MEDIUM"  = "true" ] && [ "$TRAINING_FAILED" = "false" ] && run_cell gcl medium easy_medium "$FRESH_GCL_MEDIUM_EASY_MEDIUM"
+[ "$TRAIN_AIRL_EASY_EASY"          = "true" ] && [ "$TRAINING_FAILED" = "false" ] && run_cell airl easy easy "$FRESH_AIRL_EASY_EASY"
+[ "$TRAIN_AIRL_EASY_EASY_MEDIUM"   = "true" ] && [ "$TRAINING_FAILED" = "false" ] && run_cell airl easy easy_medium "$FRESH_AIRL_EASY_EASY_MEDIUM"
+[ "$TRAIN_AIRL_MEDIUM_EASY"        = "true" ] && [ "$TRAINING_FAILED" = "false" ] && run_cell airl medium easy "$FRESH_AIRL_MEDIUM_EASY"
+[ "$TRAIN_AIRL_MEDIUM_EASY_MEDIUM" = "true" ] && [ "$TRAINING_FAILED" = "false" ] && run_cell airl medium easy_medium "$FRESH_AIRL_MEDIUM_EASY_MEDIUM"
 
 # ── Reset flag file ───────────────────────────────────────────────────────────
 log "Resetting train_phase0b.flag..."
 {
   echo "train=false"
   echo "train_gcl_easy_easy=false"
+  echo "fresh_gcl_easy_easy=false"
   echo "train_gcl_easy_easy_medium=false"
+  echo "fresh_gcl_easy_easy_medium=false"
   echo "train_gcl_medium_easy=false"
+  echo "fresh_gcl_medium_easy=false"
   echo "train_gcl_medium_easy_medium=false"
+  echo "fresh_gcl_medium_easy_medium=false"
   echo "train_airl_easy_easy=false"
+  echo "fresh_airl_easy_easy=false"
   echo "train_airl_easy_easy_medium=false"
+  echo "fresh_airl_easy_easy_medium=false"
   echo "train_airl_medium_easy=false"
+  echo "fresh_airl_medium_easy=false"
   echo "train_airl_medium_easy_medium=false"
+  echo "fresh_airl_medium_easy_medium=false"
 } > "$FLAG_FILE"
 
 # ── Commit & push ─────────────────────────────────────────────────────────────
