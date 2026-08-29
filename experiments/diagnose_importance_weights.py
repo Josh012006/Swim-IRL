@@ -16,11 +16,12 @@ computed from at each checkpoint.
 
 ESS is the standard diagnostic for importance-sampling weight
 degeneracy, not something invented for this project: uniform weights
-(w_i = 1/N for all i) give ESS = N (every pooled transition contributes
-roughly equally to reward_loss's gradient); one dominant weight (w_i
-near 1, rest near 0) gives ESS near 1 (degenerate -- reward_loss's
-gradient is effectively estimated from a SINGLE transition, however many
-were actually pooled). See irl/gcl.py's compute_importance_weights
+(w_i = 1/N for all i) give ESS = N (every background trajectory
+contributes roughly equally to reward_loss's gradient); one dominant
+weight (w_i near 1, rest near 0) gives ESS near 1 (degenerate --
+reward_loss's gradient is effectively estimated from a SINGLE
+trajectory, however many N were actually sampled). See irl/gcl.py's
+compute_importance_weights
 docstring for the full diagnosis and the clipping fix's citation trail
 (Ionides 2008, per-decision pooling per Precup 2000).
 
@@ -102,10 +103,10 @@ def main(
             reward_net, background_trajectories, policy, clip_percentile=clip_percentile
         )
 
-        n_pool = len(raw_weights)  # actual pooled (trajectory, timestep) count,
-                                    # NOT n_background (trajectory count) --
-                                    # this is what ESS is meaningfully a
-                                    # fraction OF, since per-decision pooling
+        n_pool = len(raw_weights)  # actual trajectory count (v3: back to
+                                    # per-trajectory weighting, see
+                                    # irl/gcl.py's docstring) -- what ESS
+                                    # is meaningfully a fraction OF
         raw_ess = effective_sample_size(raw_weights)
         clipped_ess = effective_sample_size(clipped_weights)
 
@@ -122,7 +123,7 @@ if __name__ == "__main__":
     parser.add_argument("--seed-mode", type=str, default="easy")
     parser.add_argument("--n-background", type=int, default=20)
     parser.add_argument(
-        "--clip-percentile", type=float, default=95.0,
+        "--clip-percentile", type=float, default=50.0,
         help="should match experiments/phase0b_gcl_training.py's "
              "IMPORTANCE_WEIGHT_CLIP_PERCENTILE to reflect the real "
              "training config -- pass a different value to explore "

@@ -99,20 +99,26 @@ QUICK_PARAMS = dict(total_timesteps=4096, n_iterations=4, n_target_successes=5)
 # Limitations for the full reasoning, both hypotheses considered).
 REWARD_LEARNING_RATE = 1e-4
 
-# Log-ratio clipping for compute_importance_weights, added after moving
-# to per-decision (per-transition) pooling was found to be only a
-# PARTIAL fix on its own: Effective Sample Size (see
-# experiments/diagnose_importance_weights.py) improved from ~1 (per-
-# trajectory weighting) to only ~3-35 out of thousands of pooled
-# transitions -- still heavily concentrated. Clipping log-ratios above
-# this percentile of each iteration's own batch, before the softmax,
-# raised ESS to ~46% of the pool at 95.0 on a real check -- see
-# irl/gcl.py's compute_importance_weights docstring for the full
-# citation trail (Ionides 2008, directly analogous to PPO's own
-# clip_range). Not yet validated across a full real training run, just
-# a single-batch measurement -- worth rechecking with
-# diagnose_importance_weights.py partway through the next run.
-IMPORTANCE_WEIGHT_CLIP_PERCENTILE = 95.0
+# Log-ratio clipping for compute_importance_weights. Went through three
+# versions -- see irl/gcl.py's compute_importance_weights docstring for
+# the full history (per-trajectory -> per-decision pooling -> back to
+# per-trajectory + clipping). This is v3: PURE per-trajectory GCL
+# weighting (staying faithful to Ziebart/Finn's own derivation, and
+# keeping the background term at the same trajectory-summed scale as
+# demo_term -- v2's per-decision pooling silently broke that scale
+# match, letting reward_net shrink reward_loss by uniformly inflating
+# its output with no discriminative learning, confirmed on a real run
+# via query_reward_model.py's demo_term/background_mean tracking),
+# with clipping applied to the N per-trajectory log-ratios as a pure
+# variance-reduction step on top.
+#
+# 50.0 here, NOT v2's 95.0 -- verified directly: with only ~20
+# background trajectories (not v2's thousands of pooled transitions), a
+# 95th-percentile clip barely caps anything (ESS improved from 1.00/20
+# to just 1.43/20). 50.0 (the median) raised it to 10.01/20 -- 50% of
+# the pool -- on the same real batch. Re-tune this again if
+# N_BACKGROUND_PER_ITER changes materially from ~20.
+IMPORTANCE_WEIGHT_CLIP_PERCENTILE = 50.0
 
 N_BACKGROUND_PER_ITER = 20
 N_EVAL_SEEDS = 30

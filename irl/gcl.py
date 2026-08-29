@@ -132,79 +132,78 @@ def compute_importance_weights(
     reward_net: RewardNetwork,
     background_trajectories: list[dict],
     policy: PPO,
-    clip_percentile: float = 95.0,
+    clip_percentile: float = 50.0,
 ) -> np.ndarray:
-    """Per-decision (per-transition) self-normalized importance weights,
-    POOLED across every timestep of every background trajectory, with
-    log-ratio clipping to bound concentration:
+    """Self-normalized importance weights, one per background trajectory
+    -- the PURE formula Ziebart/GCL theory derives, with log-ratio
+    clipping added on top as a variance-reduction technique that changes
+    nothing about what is being estimated:
 
-        ell_{i,t}       = r_theta(s_t^(i)) - log pi_phi(a_t^(i)|s_t^(i))
-        ell_{i,t}_clip  = min(ell_{i,t}, percentile(all ell, clip_percentile))
-        w_{i,t}         = softmax_{(i,t)}( ell_{i,t}_clip )
+        ell_i       = sum_t [ r_theta(s_t) - log pi_phi(a_t|s_t) ]
+        ell_i_clip  = min(ell_i, percentile({ell_1, ..., ell_N}, clip_percentile))
+        w_i         = softmax_i( ell_i_clip )
 
-    Replaces an earlier per-WHOLE-TRAJECTORY version (one weight per
-    trajectory, log_ratio = sum_t r_theta(s_t) - sum_t log pi_phi(a_t|s_t))
-    after that version was found, empirically, to degenerate almost
-    completely on this environment: Effective Sample Size (1 /
-    sum(w_i^2)) collapsed to ~1 -- meaning reward_loss's gradient was
-    effectively estimated from a SINGLE background trajectory every
-    iteration, not the 20+ actually sampled -- and stayed there even at
-    100 background trajectories, ruling out "not enough samples" as the
-    explanation (see README Limitations for the full diagnosis,
-    including the diagnostic script that measured this directly).
+    HISTORY -- two earlier versions were tried and replaced, worth
+    knowing before touching this again:
 
-    Moving to per-decision pooling (below) alone was a real but PARTIAL
-    fix -- ESS improved from ~1 to ~3.5 out of thousands of pooled
-    transitions on a real check, still heavily concentrated. Log-ratio
-    clipping is added on top of it for exactly this reason: GCL's own
-    "guided" mechanism (Finn et al. 2016 -- the policy.learn() call in
-    train_gcl below, keeping the sampling distribution close to the
-    current reward's induced optimum) is the paper's own answer to
-    importance-weight degeneracy, but doesn't fully prevent it,
-    especially mid-training before the policy has caught up to a
-    still-shifting reward. Weight clipping/truncation (Ionides 2008,
-    "Truncated Importance Sampling") is the standard complement across
-    the broader importance-sampling literature (particle filtering,
-    off-policy RL, likelihood-free inference) for exactly this residual
-    problem -- directly analogous to PPO's own clip_range, which bounds
-    its policy-side importance ratio the same way, just applied here to
-    GCL's reward-side weights instead. Trades a controlled, bounded
-    amount of bias for a large reduction in variance -- the clip
-    threshold is a PERCENTILE of the current batch's own log-ratios,
-    recomputed fresh every iteration, not a fixed absolute value that
-    would need re-tuning as reward_net and the policy evolve over a run.
+    v1 (per-trajectory, no clipping): exactly the formula above but
+    without clipping. Found, empirically, to degenerate almost
+    completely: Effective Sample Size (1 / sum(w_i^2)) collapsed to ~1,
+    meaning reward_loss's gradient was effectively estimated from a
+    SINGLE background trajectory every iteration, not the 20+ actually
+    sampled -- and stayed there even at 100 background trajectories,
+    ruling out "not enough samples" as the explanation. Root cause:
+    summing log pi(a_t|s_t) over an entire episode (300-800 steps here)
+    compounds variance with trajectory length before ever reaching the
+    softmax -- a well-documented failure mode of trajectory-level
+    importance sampling.
 
-    The per-trajectory version's log_ratio summed log pi(a_t|s_t) over
-    an ENTIRE episode (300-800 steps here) before ever reaching the
-    softmax -- variance in a sum of that many per-step terms compounds
-    with trajectory length, a well-documented failure mode of
-    trajectory-level importance sampling (per-decision importance
-    sampling, Precup 2000, exists in the broader off-policy RL
-    literature specifically to avoid it). Pooling every (trajectory,
-    timestep) pair into ONE softmax, instead of one softmax per
-    trajectory's fully-summed ratio, means an outlier at a single
-    timestep no longer drags every OTHER timestep of that same
-    trajectory down with it, and the effective normalizing pool is on
-    the order of (n_background_trajectories x average episode length),
-    not just n_background_trajectories.
+    v2 (per-decision pooling): replaced ell_i's trajectory-level SUM with
+    one ell_{i,t} per individual (trajectory, timestep) pair, pooled into
+    ONE softmax across every timestep of every trajectory (per-decision
+    importance sampling, Precup 2000) -- did fix the ESS problem
+    (improved from ~1 to a real, substantial fraction of the pool). But
+    it ALSO silently changed reward_loss's background term from a
+    trajectory-level SUM (sum_t r_theta(s_t), matching demo_term's own
+    scale exactly) to a per-STATE weighted AVERAGE (weights summing to 1
+    across thousands of pooled transitions, not N trajectories) --
+    creating a severe scale mismatch: since demo_term sums reward_net's
+    output over ~150-800 demo timesteps while the v2 background term
+    only ever carries about "1 timestep's worth" of weighted magnitude,
+    reward_net discovered it could shrink reward_loss almost for free by
+    inflating its output UNIFORMLY (no discriminative learning needed) --
+    confirmed empirically on a real run: reward_net's mean output on
+    demonstrations grew while its correlation with the true reward
+    stayed at ~0, and background_success_rate never improved. See README
+    Limitations for the full diagnosis (query_reward_model.py's
+    demo_term/background_mean tracking is what caught this).
 
-    This is arguably a MORE faithful sample-based approximation of
-    Ziebart's own exact formulation (irl/maxent_linear.py's
-    expected_feature_counts, weighted by the per-STATE visitation
-    distribution D_{s,t} at each timestep) than the per-trajectory
-    version was -- not a departure from the theory this project started
-    from, a closer sample-based approximation of it.
+    v3 (this version): keeps v1's PURE per-trajectory formula --
+    ell_i is the full trajectory-summed log-ratio, one weight per
+    trajectory, and (see reward_loss below) that weight multiplies the
+    trajectory-level reward SUM, restoring exact scale-consistency with
+    demo_term -- while adding v2's clipping technique back in, but
+    applied to the N per-TRAJECTORY log-ratios instead of the pooled
+    per-transition ones. Ionides 2008's truncated importance sampling
+    doesn't change what ell_i represents (still the same theoretically-
+    derived trajectory-level log-ratio) or what gets weighted in
+    reward_loss (still the trajectory-level reward sum) -- it only
+    bounds how much a single outlier trajectory can dominate the softmax,
+    the same variance-reduction role PPO's own clip_range plays for its
+    policy-side importance ratio.
 
-    Only states 0..T-1 of each trajectory are included (states an
-    action was actually taken from, needed for log pi(a_t|s_t)) -- the
-    final post-episode state (index T) has no associated action and is
-    excluded here, unlike the per-trajectory version which included it
-    in the trajectory-level reward sum. reward_loss's background term
-    must pool states the SAME way for its weighted sum to line up
-    index-for-index with what this function returns.
+    clip_percentile's default is 50.0 here, NOT the 95.0 that worked for
+    v2 -- verified directly: with only N=20 background trajectories
+    (rather than v2's thousands of pooled transitions), a 95th-percentile
+    clip only caps the single most extreme value, nowhere near enough to
+    break degeneracy this severe (measured ESS improvement from 1.00/20
+    to just 1.43/20 at 95.0, versus 10.01/20 -- 50% of the pool -- at
+    50.0, on the same real batch). With a much smaller sample, a much
+    more aggressive percentile is needed to meaningfully bound
+    concentration -- re-tune this again if n_background_trajectories_per_iteration
+    changes materially from ~20.
 
-    Returns shape (total number of (trajectory, timestep) pairs summed
-    across all background_trajectories,), summing to 1.
+    Returns shape (len(background_trajectories),), summing to 1.
     """
     log_ratios = []
     for traj in background_trajectories:
@@ -217,9 +216,9 @@ def compute_importance_weights(
             obs_dict = _unflatten_observations_batch(obs_for_actions)
             _, log_probs, _ = policy.policy.evaluate_actions(obs_dict, actions)    # (T,)
 
-        log_ratios.append((state_rewards - log_probs).numpy())
+        log_ratios.append((state_rewards - log_probs).sum().item())
 
-    log_ratios = np.concatenate(log_ratios)  # (sum of T over all trajectories,)
+    log_ratios = np.array(log_ratios)  # (len(background_trajectories),)
 
     clip_value = np.percentile(log_ratios, clip_percentile)
     log_ratios = np.minimum(log_ratios, clip_value)
@@ -237,21 +236,20 @@ def reward_loss(
     """GCL's per-iteration loss -- negative log-likelihood of the
     demonstrations under the current reward, sample-estimated:
 
-        L(theta) = -mean_demo[ r_theta(tau) ] + sum_{i,t} w_{i,t} * r_theta(s_t^(i))
+        L(theta) = -mean_demo[ r_theta(tau) ] + sum_i w_i * r_theta(sigma_i)
 
-    where the first sum is per-trajectory (r_theta(tau) = sum_t
-    r_theta(s_t), unaffected by the per-decision change below -- demo
-    trajectories aren't importance-weighted at all, this term just
-    averages over demonstrations). First term (gradient flows -- no
-    torch.no_grad here, unlike compute_importance_weights) pushes reward
-    up on demonstrated states. Second term pushes it down on the
-    INDIVIDUAL background states the importance weights suggest the
-    current reward over-favors.
+    where r_theta(tau) = sum_t r_theta(s_t) in BOTH terms -- demo_term
+    and the background term are the SAME kind of quantity (a trajectory-
+    summed reward), at the SAME scale, which matters: see
+    compute_importance_weights' v2 history note for what happens when
+    they drift out of scale with each other (reward_net can shrink this
+    loss by uniformly inflating its output, with no discriminative
+    learning, instead of actually separating demonstrated states from
+    background ones).
 
     importance_weights must come from THIS module's compute_importance_weights
-    (per-decision, pooled across (trajectory, timestep) pairs) -- shape
-    must equal the total number of pooled background states below, not
-    len(background_trajectories).
+    (one weight per trajectory) -- shape must equal
+    len(background_trajectories), not a pooled transition count.
     """
     demo_rewards = [
         reward_net(torch.from_numpy(demo["observations"]).float()).sum()
@@ -259,16 +257,12 @@ def reward_loss(
     ]
     demo_term = torch.stack(demo_rewards).mean()
 
-    # Pool background states the SAME way compute_importance_weights does
-    # -- states 0..T-1 of each trajectory, concatenated in the same
-    # trajectory order -- so importance_weights[k] lines up with
-    # pooled_states[k] index-for-index.
-    pooled_states = np.concatenate([
-        traj["observations"][:-1] for traj in background_trajectories
+    background_rewards = torch.stack([
+        reward_net(torch.from_numpy(traj["observations"]).float()).sum()
+        for traj in background_trajectories
     ])
-    background_state_rewards = reward_net(torch.from_numpy(pooled_states).float())  # (total_T,)
     weights_tensor = torch.from_numpy(importance_weights).float()
-    background_term = (weights_tensor * background_state_rewards).sum()
+    background_term = (weights_tensor * background_rewards).sum()
 
     return -demo_term + background_term
 
