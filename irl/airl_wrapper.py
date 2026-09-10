@@ -95,12 +95,41 @@ def _make_env(nanogoal_path, test_seeds, seed_mode, worker_idx, seed):
 
 
 def _save_checkpoint(checkpoint_dir: str, reward_net, gen_algo, timesteps_done):
+    # Numbered by timesteps_done (AIRL's natural unit -- it has no
+    # discrete "iterations" the way GCL does), NOT overwritten in place
+    # -- mirrors irl/gcl.py's own numbered-checkpoint fix, for the same
+    # reason: the previous fixed-filename version made a run's full
+    # checkpoint history disappear the moment a NEWER checkpoint was
+    # saved, leaving only the single latest snapshot ever available --
+    # no way to pick an earlier one if training degraded later (see
+    # experiments/finalize_gcl_checkpoint.py's own motivation).
     os.makedirs(checkpoint_dir, exist_ok=True)
-    torch.save(reward_net.state_dict(), os.path.join(checkpoint_dir, "reward_net.pt"))
-    gen_algo.save(os.path.join(checkpoint_dir, "gen_algo"))
-    with open(os.path.join(checkpoint_dir, "state.json"), "w") as f:
+    suffix = f"ts{timesteps_done}"
+    torch.save(reward_net.state_dict(), os.path.join(checkpoint_dir, f"reward_net_{suffix}.pt"))
+    gen_algo.save(os.path.join(checkpoint_dir, f"gen_algo_{suffix}"))
+    with open(os.path.join(checkpoint_dir, f"state_{suffix}.json"), "w") as f:
         json.dump({"timesteps_done": timesteps_done}, f)
     print(f"[checkpoint] saved at {timesteps_done} timesteps -> {checkpoint_dir}")
+
+
+def _find_latest_checkpoint_timesteps(checkpoint_dir: str) -> int | None:
+    """Scans checkpoint_dir for state_ts*.json files and returns the
+    highest timesteps_done found, or None if there are none (e.g. a
+    fresh checkpoint_dir, or one written by the old overwrite-in-place
+    format -- that older format is NOT auto-detected here, so a
+    checkpoint_dir carried over from before this change starts a fresh
+    run rather than silently resuming from a differently-shaped state).
+    """
+    if not os.path.isdir(checkpoint_dir):
+        return None
+    timesteps = []
+    for name in os.listdir(checkpoint_dir):
+        if name.startswith("state_ts") and name.endswith(".json"):
+            try:
+                timesteps.append(int(name[len("state_ts"):-len(".json")]))
+            except ValueError:
+                continue
+    return max(timesteps) if timesteps else None
 
 
 def train_airl(
@@ -157,15 +186,17 @@ def train_airl(
     )
 
     timesteps_done = 0
-    resuming = bool(checkpoint_dir) and os.path.exists(
-        os.path.join(checkpoint_dir, "state.json")  # type: ignore[arg-type]
+    latest_checkpoint_timesteps = (
+        _find_latest_checkpoint_timesteps(checkpoint_dir) if checkpoint_dir else None
     )
+    resuming = latest_checkpoint_timesteps is not None
     if resuming:
-        assert checkpoint_dir is not None  # narrowing: bool(checkpoint_dir) guarantees str
-        reward_net.load_state_dict(torch.load(os.path.join(checkpoint_dir, "reward_net.pt")))
-        gen_algo = PPO.load(os.path.join(checkpoint_dir, "gen_algo"), env=venv, device="cpu")
-        with open(os.path.join(checkpoint_dir, "state.json")) as f:
-            timesteps_done = json.load(f)["timesteps_done"]
+        assert checkpoint_dir is not None  # narrowing: latest_checkpoint_timesteps is
+                                            # only non-None when checkpoint_dir was given
+        suffix = f"ts{latest_checkpoint_timesteps}"
+        reward_net.load_state_dict(torch.load(os.path.join(checkpoint_dir, f"reward_net_{suffix}.pt")))
+        gen_algo = PPO.load(os.path.join(checkpoint_dir, f"gen_algo_{suffix}"), env=venv, device="cpu")
+        timesteps_done = latest_checkpoint_timesteps
         print(f"[checkpoint] resuming from {timesteps_done}/{n_training_steps} timesteps")
     else:
         gen_algo = PPO("MlpPolicy", venv, seed=seed, verbose=1, device="cpu",
