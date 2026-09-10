@@ -1,0 +1,15 @@
+{
+  "cell": "easy_easy",
+  "n_eval_seeds": 30,
+  "n_component_episodes": 100,
+  "expert_success_rate": 0.8333333333333334,
+  "recovered_success_rate": 0.7666666666666667,
+  "return_gap": 20.012882451231903,
+  "success_rate_gap": 0.06666666666666665,
+  "correlations": {
+    "predicted_vs_dist_goal": -0.36418429079561226,
+    "true_vs_dist_goal": -0.06770477335207117,
+    "predicted_vs_min_lidar": 0.6537758264346366,
+    "true_vs_min_lidar": 0.03636425596753168
+  }
+}
