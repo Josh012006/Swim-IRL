@@ -240,9 +240,10 @@ other gradient conditions?
 - [ ] Phase 4 — robustness & transfer
 
 *(Phase 0a implemented and validated; Phase 0b's GCL and AIRL are both
-implemented, verified end-to-end against the real environment/models, and
-the remote training pipeline (CI/CD + systemd) is set up — full-scale
-runs not yet launched, no results to report yet)*
+implemented and verified end-to-end against the real environment/models,
+with a single consolidated remote training pipeline (CI/CD + systemd) in
+place. GCL has a first real recovery result on the `easy_easy` cell — see
+Results below; AIRL and the remaining cells are not yet checked)*
 
 ## Results
 
@@ -293,22 +294,90 @@ seeds (`tests/test_nanogoal_integration.py`). `irl/gcl.py` and
 `irl/airl_wrapper.py` are both fully implemented and verified with real
 (small-scale) training runs against the real environment — not mocked
 (`tests/test_gcl.py`, `tests/test_gcl_integration.py`,
-`tests/test_airl_integration.py`). The complete remote training pipeline
-(two independent GitHub Actions workflows + systemd-backed shell scripts,
-one per algorithm, mirroring NanoGoal-RL's own CI/CD architecture) is set
-up under `.github/workflows/train_phase0b_gcl.yml` and
-`.github/workflows/train_phase0b_airl.yml`. TensorBoard logging is active
-for both: GCL writes `gcl/reward_loss`, `gcl/background_success_rate`,
+`tests/test_airl_integration.py`). The remote training pipeline (one
+GitHub Actions workflow + a systemd-backed shell script, covering both
+algorithms, mirroring NanoGoal-RL's own CI/CD architecture) is set up
+under `.github/workflows/train_phase0b.yml`. TensorBoard logging is
+active for both: GCL writes `gcl/reward_loss`, `gcl/background_success_rate`,
 and `gcl/iteration` alongside PPO's own internal metrics (entropy,
 value_loss, clip_fraction, etc.); AIRL writes PPO/imitation's own metrics.
 
-To launch a training run: edit `.github/ci/train_phase0b_gcl.flag` (or
-`train_phase0b_airl.flag`), set `train=true` and the desired cell flags
-to `true`, then push. The workflow reads the flag, writes the systemd
-environment file, and starts the service — which runs independently of
-the GitHub Actions job, checkpoints every N iterations, and sends email
-notifications at key milestones. Full-scale runs not yet launched; no
-recovery results to report yet.
+To launch a training run: edit `.github/ci/train_phase0b.flag`, set
+`train=true` and the desired per-cell/per-algorithm flags to `true` (a
+`fresh_*` flag alongside each `train_*` one forces a clean restart
+instead of auto-resuming from a checkpoint — useful whenever
+hyperparameters changed since that cell's last run), then push. The
+workflow reads the flag, writes the systemd environment file, and
+starts the service — which runs independently of the GitHub Actions
+job, checkpoints every N iterations (or N timesteps for AIRL), and
+sends email notifications at key milestones.
+
+**Phase 0b — GCL recovers a usable reward on `easy_easy` (first real
+result).** After a real diagnosis-and-fix cycle on the importance-sampling
+step (see Limitations for the full history: per-decision pooling fixed
+an initial degeneracy — Effective Sample Size collapsing to ~1 out of 20
+background trajectories — but silently broke the background term's
+scale-consistency with `demo_term`, letting `reward_net` shrink the loss
+by inflating its output uniformly instead of learning real structure;
+reverted to pure per-trajectory weighting with log-ratio clipping, which
+fixes both), a full 1000-iteration run on the `easy` model / `easy`
+seed_mode cell was evaluated with `experiments/evaluate_final_gcl_model.py`:
+
+- **Behavioral recovery** — the real test, the continuous analogue of
+  Phase 0a's EVD (`eval/recovery_continuous.sampled_recovery_gap`): a
+  policy trained *only* on GCL's recovered reward, never on the true
+  one, reaches a 0.767 success rate on 30 held-out seeds, against the
+  expert's own 0.833 (`success_rate_gap` = 0.067, `return_gap` = 20.0).
+  A policy that never saw the true reward behaves close to the expert
+  that generated its demonstrations.
+- **Qualitative reward structure** — the recovered reward correlates
+  negatively with distance-to-goal (r = -0.364) and positively with the
+  nearest obstacle's distance (r = 0.654), over 100 held-out episodes
+  (~19,000 pooled states) — the correct sign on both of NanoGoal-RL's
+  known state-dependent reward components (goal-distance, collision
+  avoidance). The true reward's own correlation with these same
+  quantities is much weaker (-0.068, 0.036) — expected if the true
+  relationship is strongly non-linear (confirmed directly on a real
+  rollout: 0 exactly-zero steps out of 802, values from about -0.03 per
+  step up to a +100 spike near the goal), which understates structure
+  on both sides via a linear correlation, not just the recovered
+  reward's.
+
+![GCL recovered reward and true reward, each against distance-to-goal and nearest-obstacle distance, easy_easy, 100 held-out episodes](experiments/results/phase0b_gcl_easy_easy_final_reward_components.png)
+
+The bottom-left panel's visible upward trend as `min_lidar` increases is
+the r = 0.654 correlation made visible — the recovered reward climbs
+fairly consistently as the nearest obstacle gets farther. The top-right
+panel (true reward, symlog scale) shows why a plain linear scale would
+be misleading here: the dense per-step signal sits in a narrow band
+around -0.03 to -0.1, visible as a distinct cluster rather than
+collapsing against y = 0, with the isolated point near +100 at
+`dist_goal` ≈ 0 standing out as the goal-reaching bonus mentioned above.
+
+- **Partial dependence** (`experiments/plotting_phase0b.plot_partial_dependence`,
+  sweeping each of the 15 input dimensions across its observed range
+  with the other 14 held at their mean) — `lidar_0` and `delta_goal_0`
+  show the expected monotone shape; several other dimensions (`agent_0`,
+  `agent_1`, most `mvt_*` and `lidar_*`) show an inverted-U shape
+  instead. Consistent between a 20-episode and a 100-episode check, so
+  not sampling noise — either genuine learned structure or an artifact
+  of evaluating held-out dimensions at an off-manifold reference point
+  (a known limitation of partial dependence plots, not resolved either
+  way here).
+
+![GCL recovered reward's partial dependence on each of the 15 input dimensions, easy_easy](experiments/results/phase0b_gcl_easy_easy_final_partial_dependence.png)
+
+`lidar_0` (row 1, column 4) and `delta_goal_0` (row 2, column 1) trace a
+clean, single-direction slope end to end — the monotone shape described
+above. Most other panels — `agent_0`, `agent_1`, `mvt_0`-`mvt_2`, and
+several `lidar_*` — instead rise partway through their range and fall
+back down, an inverted-U rather than a straight trend, most visibly on
+`agent_0`/`agent_1` in the top-left corner.
+
+Not yet checked: whether this holds on `medium_easy` or the
+`easy_medium` seed_mode, and whether AIRL reaches a comparably close
+behavioral match on the same `easy_easy` cell — the natural next
+comparison, feeding directly into Phase 3's own cross-method comparison.
 
 
 ## Reproducibility
