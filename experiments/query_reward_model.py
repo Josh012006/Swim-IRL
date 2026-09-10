@@ -39,9 +39,10 @@ import matplotlib.pyplot as plt
 import torch
 from stable_baselines3 import PPO
 
-from sim.nanogoal_adapter import create_env, rollout, load_test_seeds, sample_seed_from_mode
+from sim.nanogoal_adapter import create_env, rollout, load_test_seeds, sample_seed_from_mode, load_policy
 from data.simulate_nanogoal import generate_nanogoal_demonstrations
 from irl.gcl import RewardNetwork
+from eval.recovery_continuous import sampled_recovery_gap
 from experiments.plotting_phase0b import collect_reward_comparison_data, plot_reward_comparison
 
 
@@ -191,6 +192,8 @@ def main(
     final: bool,
     n_demos: int,
     n_background: int,
+    recovery_gap: bool,
+    n_eval_seeds: int,
 ) -> None:
     nanogoal_path = "external/NanoGoal-RL"
     env = create_env(nanogoal_path)
@@ -236,11 +239,31 @@ def main(
     background_rng = np.random.default_rng(seed + 999_999)  # separate stream,
                                                                # mirrors train_gcl's own
 
+    # recovery_gap is the REAL answer to "was the reward actually
+    # recovered" -- correlation with the true reward is a proxy for
+    # shape similarity, which can plateau, oscillate, or even improve
+    # while pred_std/demo_term drift in absolute scale, none of which
+    # says whether a policy trained on the recovered reward actually
+    # BEHAVES like the expert. This is the continuous analogue of Phase
+    # 0a's EVD: evaluate the CHECKPOINT'S OWN policy under NanoGoal-RL's
+    # true reward, against the expert used to generate demonstrations,
+    # on the SAME held-out seeds for every iteration (fair comparison).
+    # Expensive (two full rollout batches per iteration) -- opt-in, not
+    # part of the default scan.
+    expert_policy = None
+    eval_seeds: list[int] = []
+    if recovery_gap:
+        expert_policy = load_policy(nanogoal_path, model_difficulty, env)
+        eval_rng = np.random.default_rng(seed + 555_555)
+        eval_seeds = [int(s) for s in eval_rng.integers(0, 1_000_000, size=n_eval_seeds)]
+
     header = (
         f"{'iteration':>10}  {'correlation':>11}  {'pred mean':>10}  "
         f"{'pred std':>9}  {'true mean':>10}  {'true std':>9}  "
         f"{'demo_term':>10}  {'bg_mean':>9}"
     )
+    if recovery_gap:
+        header += f"  {'return_gap':>10}  {'succ_gap':>8}"
     print(header)
     print("-" * len(header))
 
@@ -258,11 +281,21 @@ def main(
             background_rng, n_background,
         )
         results.append((iteration, correlation, demo_term, background_mean))
-        print(
+        line = (
             f"{iteration:>10}  {correlation:>11.3f}  {predicted.mean():>10.3f}  "
             f"{predicted.std():>9.3f}  {true.mean():>10.3f}  {true.std():>9.3f}  "
             f"{demo_term:>10.3f}  {background_mean:>9.4f}"
         )
+
+        if recovery_gap:
+            # Both expert_policy and this checkpoint's GCL policy use
+            # MultiInputPolicy (native Dict obs) -- one shared env is
+            # correct here, same as phase0b_gcl_training.py's own
+            # run_cell (unlike AIRL, see sampled_recovery_gap's docstring).
+            gap = sampled_recovery_gap(env, expert_policy, env, policy, eval_seeds)
+            line += f"  {gap['return_gap']:>10.3f}  {gap['success_rate_gap']:>8.3f}"
+
+        print(line)
 
     if len(results) >= 2:
         iters, corrs, demo_terms, bg_means = zip(*results)
@@ -309,8 +342,21 @@ if __name__ == "__main__":
         help="background rollouts per checkpoint for the background_mean "
              "check -- match N_BACKGROUND_PER_ITER (20) for consistency",
     )
+    parser.add_argument(
+        "--recovery-gap", action="store_true",
+        help="also compute the continuous EVD analogue (eval/recovery_continuous.py's "
+             "sampled_recovery_gap): evaluate each checkpoint's OWN policy against "
+             "the expert under NanoGoal-RL's TRUE reward -- the real answer to "
+             "'was the reward actually recovered', not just a correlation proxy. "
+             "Expensive (two full rollout batches per iteration checked).",
+    )
+    parser.add_argument(
+        "--n-eval-seeds", type=int, default=30,
+        help="held-out seeds for --recovery-gap, matching "
+             "phase0b_gcl_training.py's N_EVAL_SEEDS",
+    )
     args = parser.parse_args()
     main(
         args.cell, args.seed, args.n_episodes, args.iterations, args.final,
-        args.n_demos, args.n_background,
+        args.n_demos, args.n_background, args.recovery_gap, args.n_eval_seeds,
     )

@@ -253,7 +253,7 @@ log "Resetting train_phase0b.flag..."
 log "Committing results..."
 git config user.name "github-actions[bot]"
 git config user.email "github-actions[bot]@users.noreply.github.com"
-git add experiments/results/ logs/ .github/ci/train_phase0b.flag
+git add experiments/results/ logs/ models/ .github/ci/train_phase0b.flag
 if [ -z "$(git status --porcelain)" ]; then
   log "No changes to commit."
 else
