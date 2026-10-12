@@ -376,6 +376,62 @@ several `lidar_*` — instead rise partway through their range and fall
 back down, an inverted-U rather than a straight trend, most visibly on
 `agent_0`/`agent_1` in the top-left corner.
 
+- **Visual consistency check** (`experiments/visual_eval_gcl.py`, adapted
+  from NanoGoal-RL's own `visual_eval.py`) — the expert and the policy
+  trained only on the recovered reward, replayed deterministically on the
+  *same* world seeds. Six held-out seeds, drawn reproducibly from the test
+  pool (`--n-seeds 6 --seed 0`, not hand-picked, and the one failure is
+  kept below):
+
+| seed | expert | recovered (GCL) |
+|---|---|---|
+| 2314 | success, 296 steps, return 69.7 | **failure**, 802 steps (truncated), return −38.2 |
+| 8998 | success, 296 steps, return 108.9 | success, 310 steps, return 107.6 |
+| 7318 | success, 189 steps, return 110.0 | success, 201 steps, return 109.3 |
+| 1937 | success, 111 steps, return 110.5 | success, 111 steps, return 110.3 |
+| 3817 | success, 158 steps, return 110.3 | success, 157 steps, return 109.9 |
+| 6172 | success, 163 steps, return 110.2 | success, 165 steps, return 109.5 |
+
+  Expert 6/6, recovered 5/6 — the same ballpark as the 0.833 vs 0.767
+  measured over 30 seeds above (six seeds say nothing statistically; this
+  is a visual sanity check, the 30-seed numbers remain the result). On the
+  five successful seeds the recovered policy's true-reward return is within
+  about 1.3 of the expert's and its episode length within 14 steps.
+  In each GIF below, **left = expert, right = recovered policy**.
+
+  *Seed 1937* — the two agents leave the same start and the dashed trails
+  are nearly superimposable down to the goal; both finish in exactly 111
+  steps:
+
+![Expert (left) vs GCL-recovered policy (right), seed 1937, easy_easy](experiments/results/visual_eval/phase0b_gcl_easy_easy_seed1937.gif)
+
+  *Seed 3817* — same picture on a world with a large obstacle between the
+  start and the goal: both agents follow the same route below it and reach
+  the goal within one step of each other (158 vs 157):
+
+![Expert (left) vs GCL-recovered policy (right), seed 3817, easy_easy](experiments/results/visual_eval/phase0b_gcl_easy_easy_seed3817.gif)
+
+  *Seed 7318* — the recovered policy also reaches the goal, but not by the
+  identical route: its trail bends more before the final approach and it
+  takes 12 more steps (201 vs 189). A difference of style, not of outcome:
+  consistent with a reward that has the right overall structure without
+  matching the true one exactly (see Limitations on ill-posedness):
+
+![Expert (left) vs GCL-recovered policy (right), seed 7318, easy_easy](experiments/results/visual_eval/phase0b_gcl_easy_easy_seed7318.gif)
+
+  *Seed 2314 — the failure case.* The expert goes straight down past a
+  small obstacle; the recovered policy never leaves the top-right corner
+  of the map, against the dark overhang, until the 802-step truncation.
+  This is the kind of failure the 0.067 `success_rate_gap` counts, and it
+  is a stuck-near-an-obstacle behavior rather than a wrong-direction one.
+  Why it happens (a local optimum of the recovered reward, or a policy that
+  never explored out of that corner) was not diagnosed:
+
+![Expert (left) vs GCL-recovered policy (right), seed 2314, easy_easy, failure case](experiments/results/visual_eval/phase0b_gcl_easy_easy_seed2314.gif)
+
+  The two remaining GIFs (seeds 8998 and 6172) are in
+  `experiments/results/visual_eval/`.
+
 Not yet checked: whether this holds on `medium_easy` or the
 `easy_medium` seed_mode, and whether AIRL reaches a comparably close
 behavioral match on the same `easy_easy` cell — the natural next
@@ -635,6 +691,16 @@ plots:
 python -m experiments.evaluate_final_gcl_model --cell easy_easy --n-component-episodes 100
 ```
 
+To replay the expert and the recovered policy side by side on the same
+world seeds (one GIF per seed in `experiments/results/visual_eval/`, no
+git operations; sprites are loaded relative to NanoGoal-RL's directory,
+so the submodule must be initialized):
+
+```bash
+python -m experiments.visual_eval_gcl --cell easy_easy --n-seeds 6
+python -m experiments.visual_eval_gcl --cell easy_easy --seed_value 2314 1937
+```
+
 On the training machine, intermediate checkpoints can be scanned and a
 chosen one finalized (copied to `models/`, evaluated, committed with
 `[skip ci]`):
@@ -721,6 +787,9 @@ Swim-IRL/
                                  # evaluate, commit with [skip ci]
     finalize_airl_checkpoint.py  # same for AIRL (by timesteps)
     evaluate_final_gcl_model.py  # evaluate models/ only, no git
+    visual_eval_gcl.py       # expert vs recovered policy, side-by-side GIFs on
+                             # the same seeds (adapted from NanoGoal-RL's
+                             # visual_eval.py); output in results/visual_eval/
     plotting.py              # shared plot helpers for Phase 0a reports
     plotting_phase0b.py       # Phase 0b plots: reward components, partial
                               # dependence
