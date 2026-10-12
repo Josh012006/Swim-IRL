@@ -320,8 +320,10 @@ background trajectories — but silently broke the background term's
 scale-consistency with `demo_term`, letting `reward_net` shrink the loss
 by inflating its output uniformly instead of learning real structure;
 reverted to pure per-trajectory weighting with log-ratio clipping, which
-fixes both), a full 1000-iteration run on the `easy` model / `easy`
-seed_mode cell was evaluated with `experiments/evaluate_final_gcl_model.py`:
+fixes both), a run on the `easy` model / `easy` seed_mode cell (budget:
+1000 iterations, stopped and finalized at iteration 700 once the
+behavioral recovery gap had stabilized) was evaluated with
+`experiments/evaluate_final_gcl_model.py`:
 
 - **Behavioral recovery** — the real test, the continuous analogue of
   Phase 0a's EVD (`eval/recovery_continuous.sampled_recovery_gap`): a
@@ -479,6 +481,50 @@ them and rerunning the experiment command recreates them exactly.
   grid is now: `model_difficulty` ∈ {easy, medium}, `seed_mode` ∈
   {easy, easy_medium}.
 
+- **GCL's importance weights went through three versions** (all
+  documented in `irl/gcl.py`'s docstring); the current one is a
+  compromise, not a free lunch.
+  - *v1 — per-trajectory weights, no clipping.* Effective Sample Size
+    (ESS = 1 / Σ w²) was 1.00 out of 20 background trajectories, and still
+    1.00 with 100: a single rollout dominated every reward update.
+  - *v2 — per-decision (per-transition) pooling*, to spread the weight
+    (cf. per-decision importance sampling, Precup et al. 2000). ESS
+    improved, but the background term lost its scale-consistency with the
+    demonstration term (`demo_term`): `reward_net` could shrink the loss
+    by inflating its output uniformly instead of learning structure
+    (`demo_term` / `bg_mean` stuck at ≈ 165, correlation with the true
+    reward ≈ 0, episode length stuck at the 800-step cap). Reverted.
+  - *v3 (current) — per-trajectory weights with log-ratio clipping* at a
+    percentile of the N per-trajectory log-ratios (truncated importance
+    sampling, Ionides 2008), default `clip_percentile = 50`. On N = 20
+    background trajectories, the 95th percentile still gave ESS ≈ 1.43 / 20
+    while the 50th gave ≈ 10.0 / 20. Clipping deliberately trades
+    estimator bias (high-weight trajectories are damped) for variance, so
+    this is a departure from textbook GCL, not a neutral implementation
+    detail. `clip_percentile` is a hyperparameter chosen on ESS
+    diagnostics (`experiments/diagnose_importance_weights.py`); it was
+    not tuned against the true reward, but it was only validated on the
+    `easy_easy` cell, and N = 20 background trajectories per iteration is
+    small.
+- **The `easy_easy` GCL result is one run, one seed, one cell.** The
+  stopping point (iteration 700) was picked by scanning checkpoints with
+  `experiments/query_reward_model.py --recovery-gap`, whose metric uses
+  the *true* reward — so checkpoint selection itself uses ground truth,
+  which is legitimate for a simulation-validation phase but would have no
+  equivalent on real worm data (Phase 2). The final evaluation uses a
+  different set of held-out seeds than the checkpoint scan, but it
+  remains a single run: no variance across training seeds is reported
+  yet. The expert itself only succeeds 0.833 of the time on those seeds,
+  so `success_rate_gap` is measured against an imperfect demonstrator,
+  and `sampled_recovery_gap` is not guaranteed to be ≥ 0 (see
+  `eval/recovery_continuous.py`).
+- The recovered reward's correlation with distance-to-goal and nearest
+  obstacle is *larger* in magnitude than the true reward's. This is
+  attributed to the true reward's strong non-linearity (dense small
+  per-step values plus a ≈ +100 spike near the goal), but not proven; the
+  inverted-U partial-dependence shapes are likewise uninterpreted (see
+  Results).
+
 ## Technologies used
 
 - Python
@@ -517,20 +563,20 @@ Create and activate a virtual environment:
 
 **Windows (PowerShell):**
 ```powershell
-python -m venv venv
-venv\Scripts\Activate.ps1
+python -m venv .venv
+.venv\Scripts\Activate.ps1
 ```
 
 **Windows (cmd.exe):**
 ```bat
-python -m venv venv
-venv\Scripts\activate.bat
+python -m venv .venv
+.venv\Scripts\activate.bat
 ```
 
 **macOS / Linux:**
 ```bash
-python3 -m venv venv
-source venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 ```
 
 Then, on any OS:
@@ -565,17 +611,38 @@ run (all cells, real budgets). For unattended remote execution on a
 self-hosted runner, set the flag file and push instead:
 
 ```bash
-# Edit .github/ci/train_phase0b_gcl.flag:
+# Edit .github/ci/train_phase0b.flag (one file for both algorithms):
 # train=true
-# train_easy_easy=true   ← set whichever cells you want
+# train_gcl_easy_easy=true        ← per-algorithm, per-cell flags
+# fresh_gcl_easy_easy=true        ← optional: discard checkpoints, restart from 0
 # then:
-git add .github/ci/train_phase0b_gcl.flag && git commit -m "trigger GCL cell easy_easy" && git push
+git add .github/ci/train_phase0b.flag && git commit -m "trigger GCL cell easy_easy" && git push
 ```
 
-Monitor with:
+GCL cells run before AIRL cells, sequentially, inside a single systemd
+service. Monitor with:
 ```bash
-sudo journalctl -u swim-irl-phase0b-gcl -f
-tensorboard --logdir logs/tensorboard/phase0b_gcl
+sudo journalctl -u swim-irl-phase0b -f
+tensorboard --logdir logs/tensorboard
+```
+
+Final models are committed to `models/` (reward network + policy per
+cell). To evaluate one locally — no git operations, no checkpoints
+needed — and regenerate the reward-component and partial-dependence
+plots:
+
+```bash
+python -m experiments.evaluate_final_gcl_model --cell easy_easy --n-component-episodes 100
+```
+
+On the training machine, intermediate checkpoints can be scanned and a
+chosen one finalized (copied to `models/`, evaluated, committed with
+`[skip ci]`):
+
+```bash
+python -m experiments.query_reward_model --recovery-gap      # scan all checkpoints
+python -m experiments.finalize_gcl_checkpoint  --cell easy_easy --iteration 700
+python -m experiments.finalize_airl_checkpoint --cell easy_easy --timesteps N
 ```
 
 Run both as modules (`python -m ...`), not as direct scripts (`python
@@ -606,11 +673,15 @@ Swim-IRL/
                          # compute_importance_weights, reward_loss,
                          # train_gcl -- verified against the real
                          # easy model/environment
-    airl_wrapper.py       # AIRL via imitation (Phase 0b, Phase 1) --
+    airl_wrapper.py       # AIRL via imitation (Phase 0b, Phase 1); numbered
+                         # checkpoints by timesteps --
                          # FlattenedNanoGoalEnv (NOT gymnasium's
                          # FlattenObservation, which orders Dict keys
                          # alphabetically -- inconsistent with GCL's own
                          # ordering, see Limitations), train_airl
+  models/                 # final recovered reward networks + policies per
+                          # cell (committed)
+  logs/                   # TensorBoard logs from training runs (committed)
   features.py             # isolable reward features
   mdp.py                   # shared TabularMDP dataclass + coord_to_state/
                             # state_to_coord — no dependencies, importable
@@ -643,8 +714,16 @@ Swim-IRL/
     phase0a_recovery.py      # Phase 0a: 3 reward modes, recovery + plot
     phase0b_gcl_training.py  # Phase 0b GCL: 2x2 grid, --cell/--quick/--n-envs
     phase0b_airl_training.py  # Phase 0b AIRL: same interface as GCL
+    diagnose_importance_weights.py # raw vs clipped ESS on the same rollouts
+    query_reward_model.py    # scan checkpoints: reward/true-reward
+                             # correlation, demo/background terms, --recovery-gap
+    finalize_gcl_checkpoint.py   # copy a chosen checkpoint to models/,
+                                 # evaluate, commit with [skip ci]
+    finalize_airl_checkpoint.py  # same for AIRL (by timesteps)
+    evaluate_final_gcl_model.py  # evaluate models/ only, no git
     plotting.py              # shared plot helpers for Phase 0a reports
-    plotting_phase0b.py       # shared plot helpers for Phase 0b reports
+    plotting_phase0b.py       # Phase 0b plots: reward components, partial
+                              # dependence
   tests/                   # at least the Phase 0a/0b tests
     conftest.py              # shared pytest fixtures (e.g. reference_mdp)
     test_maxent_linear.py     # irl/maxent_linear.py, vs. hand-derived values
@@ -661,16 +740,16 @@ Swim-IRL/
   .github/
     workflows/
       tests.yml               # CI: runs pytest on every push (ubuntu-latest)
-      train_phase0b_gcl.yml   # CI: reads train_phase0b_gcl.flag, launches
-                              # systemd service on self-hosted runner
-      train_phase0b_airl.yml  # CI: same for AIRL
+      train_phase0b.yml       # CI: reads train_phase0b.flag, launches the
+                              # single systemd service on the self-hosted
+                              # runner (GCL + AIRL in one workflow -- two
+                              # workflows sharing a checkout dir interfered)
     ci/
-      train_phase0b_gcl.flag  # 5 fields: train + one per 2x2 cell (GCL)
-                              # edit + push to trigger a training run
-      train_phase0b_airl.flag # same for AIRL
-      train_phase0b_gcl.sh    # systemd-backed script: runs cells sequentially,
-                              # emails milestones, commits results, opens issue
-      train_phase0b_airl.sh   # same for AIRL
+      train_phase0b.flag      # 17 fields: train + train_/fresh_ pair per
+                              # algorithm x 2x2 cell; edit + push to trigger
+      train_phase0b.sh        # systemd-backed script: GCL cells then AIRL
+                              # cells sequentially, emails milestones,
+                              # commits results/logs/models
 ```
 
 ## Future work
